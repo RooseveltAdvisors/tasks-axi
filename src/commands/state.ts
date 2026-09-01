@@ -609,15 +609,26 @@ async function withDependencyTargets(
   store: Store,
   tasks: Task[],
 ): Promise<Task[]> {
+  const dependencyTargetConcurrency = 8;
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const targetIds = [
     ...new Set(
       tasks.flatMap((task) => task.deps.map((dependency) => dependency.id)),
     ),
   ].filter((id) => !byId.has(id));
-  const targets = await Promise.all(targetIds.map((id) => store.get(id)));
-  for (const target of targets) {
-    if (target) byId.set(target.id, target);
+  for (
+    let offset = 0;
+    offset < targetIds.length;
+    offset += dependencyTargetConcurrency
+  ) {
+    const targets = await Promise.all(
+      targetIds
+        .slice(offset, offset + dependencyTargetConcurrency)
+        .map((id) => store.get(id)),
+    );
+    for (const target of targets) {
+      if (target) byId.set(target.id, target);
+    }
   }
   return [...byId.values()];
 }
@@ -792,7 +803,9 @@ export async function readyCommand(
   let all: Task[];
   let items: Task[];
   if (store.ready) {
-    items = (await store.ready({ ...(repo ? { repo } : {}) })).items;
+    items = (await store.ready({ ...(repo ? { repo } : {}) })).items.filter(
+      (task) => task.kind !== PUBLIC_FOLLOWUP_KIND,
+    );
     all =
       includeHeld || capabilities.publicFollowups
         ? (await store.list({})).items
@@ -800,6 +813,16 @@ export async function readyCommand(
   } else {
     all = (await store.list({})).items;
     items = readyTasks(all);
+  }
+  if (includeHeld && store.blocked) {
+    const nativeBlocked = (await store.blocked({})).items;
+    const nativeBlockedById = new Map(
+      nativeBlocked.map((task) => [task.id, task]),
+    );
+    all = all.map((task) => ({
+      ...task,
+      native_blockers: nativeBlockedById.get(task.id)?.native_blockers ?? [],
+    }));
   }
   const blocked = blockedIds(all);
   let held = heldTasks(all).filter(

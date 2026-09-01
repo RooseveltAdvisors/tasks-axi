@@ -17,6 +17,7 @@ import {
   unholdCommand,
 } from "../../src/commands/state.js";
 import { listCommand } from "../../src/commands/crud.js";
+import type { Task } from "../../src/model.js";
 import { makeBacklog } from "../helpers.js";
 
 describe("state commands", () => {
@@ -629,6 +630,52 @@ describe("state commands", () => {
         b.cleanup();
       }
     });
+
+    it("bounds dependency target hydration fanout", async () => {
+      const b = makeBacklog();
+      try {
+        const blockedItems: Task[] = Array.from({ length: 20 }, (_, index) => ({
+          id: `blocked-${index}`,
+          title: `blocked ${index}`,
+          state: "queued",
+          links: [],
+          deps: [{ type: "blocked-by", id: `target-${index}` }],
+        }));
+        const targets = new Map<string, Task>(
+          blockedItems.map((task) => [
+            task.deps[0].id,
+            {
+              id: task.deps[0].id,
+              title: `${task.deps[0].id} target`,
+              state: "queued",
+              links: [],
+              deps: [],
+            },
+          ]),
+        );
+        let active = 0;
+        let maximum = 0;
+        const store = Object.assign(b.store, {
+          blocked: async () => ({
+            items: blockedItems,
+            total: blockedItems.length,
+          }),
+          get: async (id: string) => {
+            active += 1;
+            maximum = Math.max(maximum, active);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            active -= 1;
+            return targets.get(id) ?? null;
+          },
+        });
+
+        await blockedCommand([], { ...b.ctx, store });
+        expect(maximum).toBeGreaterThan(1);
+        expect(maximum).toBeLessThanOrEqual(8);
+      } finally {
+        b.cleanup();
+      }
+    });
   });
 
   describe("claim", () => {
@@ -699,6 +746,25 @@ describe("state commands", () => {
           "Run `tasks-axi claim <id>` to claim one exclusively",
         );
         expect(out).not.toContain("tasks-axi start <id>");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("excludes public followups returned by a native ready query", async () => {
+      const b = makeBacklog();
+      try {
+        const task = await b.store.get("cert-cleanup");
+        const store = Object.assign(b.store, {
+          ready: async () => ({
+            items: [{ ...task!, kind: "public-followup" }],
+            total: 1,
+          }),
+        });
+
+        const out = await readyCommand([], { ...b.ctx, store });
+        expect(out).toContain("ready: 0 unblocked queued tasks");
+        expect(out).not.toContain("cert-cleanup");
       } finally {
         b.cleanup();
       }
@@ -783,6 +849,33 @@ describe("state commands", () => {
         expect(out).toContain("hold_reason");
         expect(out).toContain("load clears");
         expect(out).toContain("2999-01-01");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("uses native blocked results when filtering held tasks", async () => {
+      const b = makeBacklog();
+      try {
+        await holdCommand(
+          ["cert-cleanup", "--reason", "captain decision"],
+          b.ctx,
+        );
+        await blockCommand(
+          ["cert-cleanup", "--by", "owns-widget-h7"],
+          b.ctx,
+        );
+        const store = Object.assign(b.store, {
+          ready: async () => ({ items: [], total: 0 }),
+          blocked: async () => ({ items: [], total: 0 }),
+        });
+
+        const out = await readyCommand(["--include-held"], {
+          ...b.ctx,
+          store,
+        });
+        expect(out).toContain("held[");
+        expect(out).toContain("cert-cleanup");
       } finally {
         b.cleanup();
       }

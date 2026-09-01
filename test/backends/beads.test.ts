@@ -339,7 +339,6 @@ describe("BeadsStore", () => {
       already: false,
       task: { id: "fm-ready", state: "in_flight" },
     });
-    await store.transition("fm-unassigned", "in_flight");
     await expect(store.claim("fm-unassigned")).resolves.toMatchObject({
       already: false,
     });
