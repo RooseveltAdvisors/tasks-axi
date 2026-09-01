@@ -1,8 +1,12 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { decode } from "@toon-format/toon";
 import { describe, expect, it } from "vitest";
 import {
   blockCommand,
+  blockedCommand,
+  claimCommand,
+  depsCommand,
   doneCommand,
   holdCommand,
   mvCommand,
@@ -25,6 +29,8 @@ describe("state commands", () => {
         () => doneCommand(["bad:id", "--no-prune"], b.ctx),
         () => reopenCommand(["bad:id"], b.ctx),
         () => blockCommand(["bad:id", "--by", "owns-widget-h7"], b.ctx),
+        () => claimCommand(["bad:id"], b.ctx),
+        () => depsCommand(["bad:id"], b.ctx),
         () => unblockCommand(["bad:id", "--by", "owns-widget-h7"], b.ctx),
         () => holdCommand(["bad:id", "--reason", "wait"], b.ctx),
         () => unholdCommand(["bad:id"], b.ctx),
@@ -582,7 +588,122 @@ describe("state commands", () => {
     });
   });
 
+  describe("blocked and deps", () => {
+    it("lists active blockers through dedicated commands", async () => {
+      const b = makeBacklog();
+      try {
+        await blockCommand(["cert-cleanup", "--by", "owns-widget-h7"], b.ctx);
+
+        const blocked = await blockedCommand([], b.ctx);
+        expect(blocked).toContain("blocked[");
+        expect(blocked).toContain("cert-cleanup");
+        expect(blocked).toContain("owns-widget-h7");
+
+        const deps = await depsCommand(["cert-cleanup"], b.ctx);
+        expect(deps).toContain("task: cert-cleanup");
+        expect(deps).toContain("blocked: yes");
+        expect(deps).toContain("blocked-by");
+        expect(deps).toContain("owns-widget-h7");
+        expect(
+          (
+            decode(deps) as {
+              deps: Array<{ blocking: string }>;
+            }
+          ).deps[0].blocking,
+        ).toBe("yes");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("reports definitive empty dependency and blocked states", async () => {
+      const b = makeBacklog("# Backlog\n\n## Queued\n- [ ] solo-q1 - solo\n");
+      try {
+        expect(await blockedCommand([], b.ctx)).toContain(
+          "blocked: 0 actively blocked tasks",
+        );
+        expect(await depsCommand(["solo-q1"], b.ctx)).toContain(
+          "deps: 0 dependencies for solo-q1",
+        );
+      } finally {
+        b.cleanup();
+      }
+    });
+  });
+
+  describe("claim", () => {
+    it("is capability-gated instead of falling through to Markdown", async () => {
+      const b = makeBacklog();
+      try {
+        await expect(
+          claimCommand(["cert-cleanup"], b.ctx),
+        ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("confirms a backend claim and preserves idempotent retries", async () => {
+      const b = makeBacklog();
+      try {
+        const store = Object.assign(b.store, {
+          claim: async (id: string) => {
+            const current = await b.store.get(id);
+            const task = await b.store.transition(id, "in_flight");
+            return { task, already: current?.state === "in_flight" };
+          },
+        });
+        const context = { ...b.ctx, store };
+
+        const claimed = await claimCommand(["cert-cleanup"], context);
+        expect(claimed).toContain("ok: claim cert-cleanup -> In flight");
+        expect(claimed).toContain(
+          "Run `tasks-axi done cert-cleanup --pr <url>` when it ships",
+        );
+
+        const retried = JSON.parse(
+          await claimCommand(["cert-cleanup", "--json"], context),
+        ) as { ok: boolean; action: string; already: boolean };
+        expect(retried).toMatchObject({
+          ok: true,
+          action: "claim",
+          already: true,
+        });
+      } finally {
+        b.cleanup();
+      }
+    });
+  });
+
   describe("ready", () => {
+    it("uses a backend-native ready query and suggests exclusive claim", async () => {
+      const b = makeBacklog();
+      try {
+        const task = await b.store.get("cert-cleanup");
+        let calls = 0;
+        const store = Object.assign(b.store, {
+          ready: async () => {
+            calls += 1;
+            return { items: [task!], total: 1 };
+          },
+          claim: async (id: string) => ({
+            task: await b.store.transition(id, "in_flight"),
+            already: false,
+          }),
+        });
+
+        const out = await readyCommand([], { ...b.ctx, store });
+        expect(calls).toBe(1);
+        expect(out).toContain("cert-cleanup");
+        expect(out).toContain(
+          "Run `tasks-axi claim <id>` to claim one exclusively",
+        );
+        expect(out).not.toContain("tasks-axi start <id>");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("lists unblocked queued work and excludes blocked tasks", async () => {
       const b = makeBacklog();
       try {

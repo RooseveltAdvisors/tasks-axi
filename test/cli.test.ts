@@ -216,6 +216,15 @@ describe("CLI entrypoint", () => {
     expect(c.read()).toContain("usage: tasks-axi done");
   });
 
+  it.each(["blocked", "claim", "deps"])(
+    "registers the %s first-class verb",
+    async (command) => {
+      const c = capture();
+      await main({ argv: [command, "--help"], stdout: c.stdout });
+      expect(c.read()).toContain(`usage: tasks-axi ${command}`);
+    },
+  );
+
   it("returns focused help for a public-followup subcommand", async () => {
     const c = capture();
     await main({

@@ -22,9 +22,9 @@ export function currentLocalDate(): string {
 }
 
 /**
- * Derived `blocked` / `ready` / `held` projections, computed in the CLI from
- * the full task list, dependency graph, and structured hold tags (report §8:
- * these are not Store methods, so every backend gets them for free).
+ * Shared `blocked` / `ready` / `held` projections over a full task graph.
+ * Commands use these as the backend-agnostic fallback and to render derived
+ * fields even when a backend supplies native ready/blocked selection.
  *
  * A task is `blocked` iff it is not done and has a `blocked-by` edge pointing
  * at a task that exists and is not done. Command mutations reject new dangling

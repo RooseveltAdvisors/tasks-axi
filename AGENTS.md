@@ -9,12 +9,12 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
 
 - `src/cli.ts` — `runAxiCli` wiring: `DESCRIPTION`, `TOP_HELP`, the verb→handler map (with aliases create/view/edit/delete/close), the optional `task` noun prefix, and the global `--backend` / `--file` flags (stripped before handlers, parsed for `resolveContext`).
 - `src/context.ts` — `resolveTasksContext` builds the backend `Store` + `ResolvedConfig`; every command receives this `TasksContext`.
-- `src/store.ts` - the `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`. `prune`/`render` are optional and capability-gated.
+- `src/store.ts` - the `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`; native `ready`/`blocked`/`deps`/`claim` hooks and maintenance `prune`/`render` are optional.
 - `src/model.ts` — the `Task` data model (report §5).
 - `src/pr-url.ts` — `isPrUrl`, the one canonical PR-URL seam (GitHub `/pull/<n>` on github.com, Forgejo `/pulls/<n>` on any lowercase DNS host) shared by prose link derivation, `--pr` validation, and public-followup `pr_url`; near-misses derive as `doc` links, never `pr`.
-- `src/derive.ts` - worker `blocked` / `ready` / active `held` and public delivery readiness are derived in the CLI from `list` + the dep graph + hold date gates, never Store methods, so every backend gets them for free.
+- `src/derive.ts` - the shared worker `blocked` / `ready` / active `held` and public delivery projections. CLI queries use backend-native hooks when available and these graph functions as the fallback.
 - `src/backends/markdown*.ts` — the byte-preserving Markdown backend.
-- `src/backends/beads.ts` — the `bd` CLI adapter; its header owns the ID, hold, and dependency-reason persistence mappings.
+- `src/backends/beads.ts` — the only `bd` CLI adapter; its header owns the ID, hold, and dependency-reason persistence mappings, while native ready/blocked/deps selection and atomic claim stay behind the `Store` seam. `test/backends/beads-live.test.ts` creates a standalone temporary Git repo before `bd init`; a nested directory alone can discover and mutate the enclosing repo's Beads database.
 - `src/public-followup.ts` - authoritative versioned schema, strict privacy-safe validation, canonical encoding, immutable-field checks, relation/event readiness, and terminal-state invariants for `kind=public-followup`; `src/commands/public-followup.ts` owns its dedicated CLI state machine.
 - `src/commands/*` — one file per verb group; `src/view.ts` owns the read-side TOON projection; `src/confirm.ts` owns the write-side output (the `ok:` confirmation line, the `--json` payload, and `renderMutation`, which assembles both).
 - Shared helpers copied from the family: `args.ts`, `body.ts`, `format.ts`, `fields.ts`, `toon.ts`, `suggestions.ts`, `skill.ts` (minimal CLI-deferring stub generator).

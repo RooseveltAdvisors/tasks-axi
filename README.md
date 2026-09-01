@@ -98,10 +98,15 @@ tasks-axi reopen some-task
 
 # dependencies, holds, and the ready queue
 tasks-axi block firstmate-lease-adopt --by treehouse-lease-t4
+tasks-axi deps firstmate-lease-adopt
 tasks-axi hold firstmate-lease-adopt --reason "captain decision pending" --kind captain
 tasks-axi unhold firstmate-lease-adopt
 tasks-axi ready
+tasks-axi blocked
 tasks-axi ready --include-held
+
+# Beads dispatch claims are atomic and exclusive
+tasks-axi claim fm-ready-q1 --backend beads --json
 
 # edit the body and title: inspect current notes, then replace the body or title deliberately
 tasks-axi show nm-release-validation --full
@@ -131,6 +136,9 @@ Running `done` again on an already Done task can still backfill a new `--pr`, `-
 The reason must be single-line text without parentheses because parentheses are reserved for canonical markdown tags.
 Active holds are excluded from `ready`; a hold with `--until YYYY-MM-DD` becomes inactive on and after that date, so the task can surface as ready again if nothing else blocks it.
 Use `ready --include-held` to show dispatchable ready work and a separate `held` group with the hold reason, kind, and until date.
+Use `blocked` for the inverse queue and `deps <id>` to inspect the typed edges that determine whether a task is blocked.
+On Beads, `ready`, `blocked`, and `deps` use Beads-native graph operations, while `claim <id>` uses its atomic claim primitive and fails if another actor already owns the task.
+Call these operations through tasks-axi rather than invoking `bd` from an integrating agent.
 Use `list --state held` or `list --fields held,hold_reason,hold_kind,hold_until` when you need to scan active hold state directly.
 Pass `--json` to any mutation for a machine-readable result object (`{ "ok": true, "action": …, "task": { … } }` or operation-specific result fields) instead of TOON, so an agent can confirm a write deterministically without a follow-up read.
 `prune`, `render`, and `mv` are Markdown-only maintenance commands. For `mv`, a single task returns `id`, while a multi-task move returns first-occurrence-ordered, deduplicated `ids`, plus `from` and `to`.
@@ -261,7 +269,9 @@ prefix = "fm"
 Beads descriptions contain a reserved versioned tasks-axi metadata header for
 fields that are not native Beads fields; ordinary Beads issues remain readable
 as tasks. Beads supports dependency edges, comments, full-text search, and
-server-side ids, but not tasks-axi pruning or public-followup obligations.
+server-side ids, plus native ready/blocked queries and exclusive claims, but not
+tasks-axi pruning or public-followup obligations. The claim actor follows the
+normal Beads actor resolution, including `BEADS_ACTOR` when set.
 
 Markdown `archive` is optional; when omitted, pruned tasks are appended to `done-archive.md` next to the active backlog.
 Markdown body replacements with `--archive-body` append superseded bodies to `note-archive.md` next to the active backlog.

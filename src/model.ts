@@ -157,7 +157,7 @@ export interface TransitionOpts {
   date?: string;
 }
 
-/** A list query. `blocked`/`ready`/`held` derivation is computed in the CLI layer. */
+/** Common filters for list and optional backend-native coordination queries. */
 export interface TaskQuery {
   state?: State;
   repo?: string;

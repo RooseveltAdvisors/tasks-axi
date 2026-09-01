@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BeadsStore, type BeadsRunner } from "../../src/backends/beads.js";
+import { blockedIds } from "../../src/derive.js";
 
 type FakeBead = Record<string, unknown>;
 
@@ -40,6 +41,20 @@ function fakeBd(ignore: string[] = []) {
     } else if (command === "show") {
       const bead = beads.get(args[1]);
       return { stdout: JSON.stringify(bead ? [bead] : []), stderr: "" };
+    } else if (command === "ready" || command === "blocked") {
+      const activeBlocker = (id: string) =>
+        edges.some(
+          (edge) =>
+            edge.issue_id === id &&
+            edge.type === "blocks" &&
+            beads.get(edge.depends_on_id)?.status !== "closed",
+        );
+      const items = [...beads.values()].filter((bead) => {
+        if (bead.status !== "open") return false;
+        const blocked = activeBlocker(String(bead.id));
+        return command === "blocked" ? blocked : !blocked;
+      });
+      return { stdout: JSON.stringify(items), stderr: "" };
     } else if (command === "list") {
       return { stdout: JSON.stringify([...beads.values()]), stderr: "" };
     } else if (command === "dep") {
@@ -72,6 +87,10 @@ function fakeBd(ignore: string[] = []) {
       const bead = beads.get(args[1]);
       if (!bead) return { stdout: "[]", stderr: "" };
       if (ignore.includes(operation)) return { stdout: "[]", stderr: "" };
+      if (args.includes("--claim")) {
+        bead.status = "in_progress";
+        bead.assignee ??= "fake-agent";
+      }
       if (args.includes("--title"))
         bead.title = args[args.indexOf("--title") + 1];
       if (args.includes("--description"))
@@ -213,6 +232,110 @@ describe("BeadsStore", () => {
     expect(await store.remove("fm-tasks-axi-beads")).toMatchObject({
       id: "fm-tasks-axi-beads",
     });
+  });
+
+  it("uses native ready, blocked, claim, and dependency operations", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: fake.run,
+    });
+    await store.create({ id: "fm-blocker", title: "blocker" });
+    await store.create({ id: "fm-blocked", title: "blocked" });
+    await store.create({ id: "fm-ready", title: "ready" });
+    await store.create({ id: "fm-unassigned", title: "unassigned" });
+    await store.create({
+      id: "fm-held",
+      title: "held",
+      hold: { reason: "captain" },
+    });
+    await store.addDep("fm-blocked", {
+      type: "blocked-by",
+      id: "fm-blocker",
+      reason: "wait for blocker",
+    });
+
+    const ready = await store.ready({});
+    expect(ready.items.map((task) => task.id)).toEqual([
+      "fm-blocker",
+      "fm-ready",
+      "fm-unassigned",
+    ]);
+    const blocked = await store.blocked({});
+    expect(blocked.items.map((task) => task.id)).toEqual(["fm-blocked"]);
+    const blocker = await store.get("fm-blocker");
+    expect(blockedIds([...blocked.items, blocker!]).has("fm-blocked")).toBe(
+      true,
+    );
+    await expect(store.deps("fm-blocked")).resolves.toMatchObject({
+      items: [
+        {
+          type: "blocked-by",
+          id: "fm-blocker",
+          reason: "wait for blocker",
+        },
+      ],
+    });
+
+    await expect(store.claim("fm-ready")).resolves.toMatchObject({
+      already: false,
+      task: { id: "fm-ready", state: "in_flight" },
+    });
+    await store.transition("fm-unassigned", "in_flight");
+    await expect(store.claim("fm-unassigned")).resolves.toMatchObject({
+      already: false,
+    });
+    await expect(store.claim("fm-unassigned")).resolves.toMatchObject({
+      already: true,
+    });
+    await store.transition("fm-blocker", "done");
+    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+      "fm-blocked",
+    );
+  });
+
+  it("allows exactly one actor to claim a Beads task", async () => {
+    const fake = fakeBd();
+    const runAs =
+      (actor: string): BeadsRunner =>
+      async (binary, args, cwd) => {
+        if (args[0] === "update" && args.includes("--claim")) {
+          const bead = fake.beads.get(args[1]);
+          if (!bead) throw new Error("missing test bead");
+          if (bead.assignee && bead.assignee !== actor) {
+            throw Object.assign(new Error("claim conflict"), {
+              stderr: `issue already claimed by ${String(bead.assignee)}`,
+            });
+          }
+          bead.assignee = actor;
+          bead.status = "in_progress";
+          return { stdout: JSON.stringify([bead]), stderr: "" };
+        }
+        return fake.run(binary, args, cwd);
+      };
+    const first = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: runAs("agent-one"),
+    });
+    const second = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: runAs("agent-two"),
+    });
+    await first.create({ id: "fm-exclusive", title: "exclusive" });
+
+    const claims = await Promise.allSettled([
+      first.claim("fm-exclusive"),
+      second.claim("fm-exclusive"),
+    ]);
+    expect(
+      claims.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      claims.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
   });
 
   it("reports capabilities and turns missing beads into a null get", async () => {

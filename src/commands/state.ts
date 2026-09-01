@@ -19,7 +19,7 @@ import {
   readyPublicFollowups,
   readyTasks,
 } from "../derive.js";
-import { AxiError, notFound } from "../errors.js";
+import { AxiError, notFound, unsupported } from "../errors.js";
 import { formatCountLine } from "../format.js";
 import { validateDependencyId } from "../id.js";
 import type {
@@ -36,9 +36,15 @@ import {
   PUBLIC_FOLLOWUP_KIND,
   clonePublicFollowup,
 } from "../public-followup.js";
-import type { Store } from "../store.js";
+import type { ClaimResult, Store } from "../store.js";
 import { getSuggestions } from "../suggestions.js";
-import { renderHelp, renderOutput } from "../toon.js";
+import {
+  field,
+  renderHelp,
+  renderList,
+  renderOutput,
+  renderScalar,
+} from "../toon.js";
 import { renderTaskDetail, renderTaskList, showFullTextHint } from "../view.js";
 
 export const START_HELP = `usage: tasks-axi start <id>
@@ -99,6 +105,29 @@ List unblocked, unheld queued work dispatchable right now.
 Public-followup obligations are never dispatchable and appear only in the separate
 ready_public_followups group; use tasks-axi public-followup ready for their full payloads.
 Held work is excluded by default; --include-held shows it in a separate held group.`;
+
+export const BLOCKED_LIST_HELP = `usage: tasks-axi blocked [--repo <name>]
+List active work whose blocked-by dependency has not completed.
+flags:
+  --repo <name>   limit results to one repository
+examples:
+  tasks-axi blocked
+  tasks-axi blocked --repo firstmate --backend beads`;
+
+export const CLAIM_HELP = `usage: tasks-axi claim <id> [--json]
+Atomically claim a task for the current backend actor.
+Exclusive claim support is currently provided by the Beads backend.
+flags:
+  --json   print the resulting task as a JSON object
+examples:
+  tasks-axi claim fm-ready-q1 --backend beads
+  tasks-axi claim fm-ready-q1 --backend beads --json`;
+
+export const DEPS_HELP = `usage: tasks-axi deps <id>
+List a task's typed dependencies and show which blocked-by edges are active.
+examples:
+  tasks-axi deps firstmate-treehouse-lease-adopt
+  tasks-axi deps fm-blocked-q1 --backend beads`;
 
 export const MV_HELP = `usage: tasks-axi mv <id> [<id>...] --to <path-or-dir>
 Move one or more tasks to another backlog file in a single atomic transaction.
@@ -575,6 +604,179 @@ export async function unholdCommand(
   });
 }
 
+async function withDependencyTargets(
+  store: Store,
+  tasks: Task[],
+): Promise<Task[]> {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  const targetIds = [
+    ...new Set(
+      tasks.flatMap((task) => task.deps.map((dependency) => dependency.id)),
+    ),
+  ].filter((id) => !byId.has(id));
+  const targets = await Promise.all(targetIds.map((id) => store.get(id)));
+  for (const target of targets) {
+    if (target) byId.set(target.id, target);
+  }
+  return [...byId.values()];
+}
+
+export async function blockedCommand(
+  rawArgs: string[],
+  context?: TasksContext,
+): Promise<string> {
+  const { store } = requireCtx(context);
+  const args = [...rawArgs];
+  const repo = requireNonEmptySingleLineFlagValue(
+    "--repo",
+    takeFlag(args, "--repo"),
+  );
+  requirePositionals(args, 0, 0, BLOCKED_LIST_HELP.split("\n")[0]);
+
+  let items: Task[];
+  let all: Task[];
+  if (store.blocked) {
+    items = (await store.blocked({ ...(repo ? { repo } : {}) })).items;
+    all = await withDependencyTargets(store, items);
+  } else {
+    all = (await store.list({})).items;
+    const blocked = blockedIds(all);
+    items = all.filter(
+      (task) => blocked.has(task.id) && (!repo || task.repo === repo),
+    );
+  }
+
+  const isEmpty = items.length === 0;
+  const blocks = [formatCountLine({ count: items.length })];
+  blocks.push(
+    isEmpty
+      ? renderScalar("blocked", "0 actively blocked tasks")
+      : renderTaskList("blocked", items, all, [field("blocked_by")]),
+  );
+  blocks.push(
+    renderHelp(
+      getSuggestions({
+        action: "blocked",
+        isEmpty,
+        globals: context?.suggestionGlobals,
+        filters: { ...(repo !== undefined ? { repo } : {}) },
+      }),
+    ),
+  );
+  return renderOutput(blocks);
+}
+
+export async function depsCommand(
+  rawArgs: string[],
+  context?: TasksContext,
+): Promise<string> {
+  const { store } = requireCtx(context);
+  const args = [...rawArgs];
+  const positionals = requirePositionals(args, 1, 1, DEPS_HELP.split("\n")[0]);
+  const id = requireId(positionals[0], "id");
+
+  let task: Task;
+  let items: Dep[];
+  if (store.deps) {
+    try {
+      const result = await store.deps(id);
+      task = result.task;
+      items = result.items;
+    } catch (error) {
+      if (error instanceof AxiError && error.code === "NOT_FOUND") {
+        throw notFound(id, { globals: context?.suggestionGlobals });
+      }
+      throw error;
+    }
+  } else {
+    const current = await store.get(id);
+    if (!current) throw notFound(id, { globals: context?.suggestionGlobals });
+    task = current;
+    items = current.deps;
+  }
+
+  const all = await withDependencyTargets(store, [
+    { ...task, deps: items.map((dependency) => ({ ...dependency })) },
+  ]);
+  const byId = new Map(all.map((candidate) => [candidate.id, candidate]));
+  const rows = items.map((dependency) => {
+    const target = byId.get(dependency.id);
+    return {
+      type: dependency.type,
+      id: dependency.id,
+      state: target?.state ?? "missing",
+      blocking:
+        task.state !== "done" &&
+        dependency.type === "blocked-by" &&
+        target !== undefined &&
+        target.state !== "done"
+          ? "yes"
+          : "no",
+      reason: dependency.reason ?? "-",
+    };
+  });
+  const blocks = [
+    renderScalar("task", id),
+    renderScalar("blocked", blockedIds(all).has(id) ? "yes" : "no"),
+    formatCountLine({ count: items.length }),
+    items.length === 0
+      ? renderScalar("deps", `0 dependencies for ${id}`)
+      : renderList("deps", rows, [
+          field("type"),
+          field("id"),
+          field("state"),
+          field("blocking"),
+          field("reason"),
+        ]),
+  ];
+  return renderOutput(blocks);
+}
+
+export async function claimCommand(
+  rawArgs: string[],
+  context?: TasksContext,
+): Promise<string> {
+  const { store } = requireCtx(context);
+  const args = [...rawArgs];
+  const json = takeBoolFlag(args, "--json");
+  const positionals = requirePositionals(args, 1, 1, CLAIM_HELP.split("\n")[0]);
+  const id = requireId(positionals[0], "id");
+  if (!store.claim) {
+    throw unsupported("exclusive claims", store.capabilities().backend);
+  }
+
+  let claimed: ClaimResult;
+  try {
+    claimed = await store.claim(id);
+  } catch (error) {
+    if (error instanceof AxiError && error.code === "NOT_FOUND") {
+      throw notFound(id, { globals: context?.suggestionGlobals });
+    }
+    throw error;
+  }
+  const { task, already } = claimed;
+  const all = await withDependencyTargets(store, [task]);
+  return renderMutation({
+    json,
+    confirm: already
+      ? `claim ${id} already -> ${stateLabel(task.state)}`
+      : `claim ${id} -> ${stateLabel(task.state)}`,
+    already,
+    jsonPayload: {
+      ok: true,
+      action: "claim",
+      ...(already ? { already: true } : {}),
+      task: taskToJson(task, all),
+    },
+    suggestions: getSuggestions({
+      action: "claim",
+      id,
+      state: task.state,
+      globals: context?.suggestionGlobals,
+    }),
+  });
+}
+
 export async function readyCommand(
   rawArgs: string[],
   context?: TasksContext,
@@ -588,8 +790,19 @@ export async function readyCommand(
   const includeHeld = takeBoolFlag(args, "--include-held");
   requirePositionals(args, 0, 0, READY_HELP.split("\n")[0]);
 
-  const all = (await store.list({})).items;
-  let items = readyTasks(all);
+  const capabilities = store.capabilities();
+  let all: Task[];
+  let items: Task[];
+  if (store.ready) {
+    items = (await store.ready({ ...(repo ? { repo } : {}) })).items;
+    all =
+      includeHeld || capabilities.publicFollowups
+        ? (await store.list({})).items
+        : await withDependencyTargets(store, items);
+  } else {
+    all = (await store.list({})).items;
+    items = readyTasks(all);
+  }
   const blocked = blockedIds(all);
   let held = heldTasks(all).filter(
     (t) =>
@@ -597,7 +810,9 @@ export async function readyCommand(
       t.kind !== PUBLIC_FOLLOWUP_KIND &&
       !blocked.has(t.id),
   );
-  let publicFollowups = readyPublicFollowups(all);
+  let publicFollowups = capabilities.publicFollowups
+    ? readyPublicFollowups(all)
+    : [];
   if (repo) items = items.filter((t) => t.repo === repo);
   if (repo) held = held.filter((t) => t.repo === repo);
   if (repo) publicFollowups = publicFollowups.filter((t) => t.repo === repo);
@@ -632,6 +847,7 @@ export async function readyCommand(
       getSuggestions({
         action: "ready",
         isEmpty,
+        claimable: Boolean(store.claim),
         globals: context?.suggestionGlobals,
         filters: {
           ...(repo !== undefined ? { repo } : {}),

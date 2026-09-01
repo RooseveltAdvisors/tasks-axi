@@ -15,6 +15,7 @@ import { execFile as execFileCallback } from "node:child_process";
 import { basename, dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { deriveLinks } from "./markdown-grammar.js";
+import { isHoldActive } from "../derive.js";
 import { AxiError, unsupported } from "../errors.js";
 import type {
   Dep,
@@ -28,7 +29,12 @@ import type {
   TaskUpdateResult,
   TransitionOpts,
 } from "../model.js";
-import type { Capabilities, Store } from "../store.js";
+import type {
+  Capabilities,
+  ClaimResult,
+  DependencyQueryResult,
+  Store,
+} from "../store.js";
 
 const execFile = promisify(execFileCallback);
 const META_PREFIX = "<!-- tasks-axi:beads/v1:";
@@ -201,6 +207,24 @@ function sameHold(left: Hold | undefined, right: Hold | undefined): boolean {
   );
 }
 
+function queryTasks(
+  source: Task[],
+  query: TaskQuery,
+): { items: Task[]; total: number } {
+  let items = source;
+  if (query.state) items = items.filter((task) => task.state === query.state);
+  if (query.repo) items = items.filter((task) => task.repo === query.repo);
+  if (query.kind) items = items.filter((task) => task.kind === query.kind);
+  const total = items.length;
+  return {
+    items:
+      query.limit === undefined || query.limit < 0
+        ? items
+        : items.slice(0, query.limit),
+    total,
+  };
+}
+
 export class BeadsStore implements Store {
   private readonly binary: string;
   private readonly cwd: string;
@@ -281,6 +305,19 @@ export class BeadsStore implements Store {
     return result;
   }
 
+  private async tasks(value: unknown): Promise<Task[]> {
+    const beads = jsonItems(value);
+    const deps = await this.depsFor(
+      beads
+        .map((bead) => text(bead.id))
+        .filter((id): id is string => id !== undefined),
+    );
+    return beads.map((bead) => {
+      const id = text(bead.id) ?? "";
+      return taskFromBead(bead, deps.get(id) ?? []);
+    });
+  }
+
   private async bead(id: string): Promise<{ bead: Bead; task: Task } | null> {
     const raw = await this.call("show", ["show", id, "--json"], true);
     if (raw === null) return null;
@@ -323,7 +360,7 @@ export class BeadsStore implements Store {
   }
 
   async list(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
-    const beads = jsonItems(
+    const items = await this.tasks(
       await this.call("list", [
         "list",
         "--all",
@@ -333,25 +370,29 @@ export class BeadsStore implements Store {
         "--json",
       ]),
     );
-    const deps = await this.depsFor(
-      beads
-        .map((bead) => text(bead.id))
-        .filter((id): id is string => id !== undefined),
+    return queryTasks(items, query);
+  }
+
+  async ready(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
+    const items = (
+      await this.tasks(await this.call("ready", ["ready", "-n", "0", "--json"]))
+    ).filter((task) => !isHoldActive(task));
+    return queryTasks(items, query);
+  }
+
+  async blocked(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
+    const items = await this.tasks(
+      await this.call("blocked", ["blocked", "--json"]),
     );
-    let items = beads.map((bead) => {
-      const id = text(bead.id) ?? "";
-      return taskFromBead(bead, deps.get(id) ?? []);
-    });
-    if (query.state) items = items.filter((task) => task.state === query.state);
-    if (query.repo) items = items.filter((task) => task.repo === query.repo);
-    if (query.kind) items = items.filter((task) => task.kind === query.kind);
-    const total = items.length;
+    return queryTasks(items, query);
+  }
+
+  async deps(id: string): Promise<DependencyQueryResult> {
+    const found = await this.bead(id);
+    if (!found) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
     return {
-      items:
-        query.limit === undefined || query.limit < 0
-          ? items
-          : items.slice(0, query.limit),
-      total,
+      task: found.task,
+      items: found.task.deps.map((dep) => ({ ...dep })),
     };
   }
 
@@ -673,6 +714,28 @@ export class BeadsStore implements Store {
       );
     }
     return task;
+  }
+
+  async claim(id: string): Promise<ClaimResult> {
+    const before = await this.bead(id);
+    if (!before) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
+    await this.call("claim", ["update", id, "--claim", "--json"]);
+    const found = await this.bead(id);
+    if (!found) throw new AxiError(`beads claim removed "${id}"`, "UNKNOWN");
+    if (found.task.state !== "in_flight") {
+      throw new AxiError(
+        `beads claim did not persist state "in_flight"`,
+        "UNKNOWN",
+      );
+    }
+    const beforeAssignee = text(before.bead.assignee);
+    return {
+      task: found.task,
+      already:
+        before.task.state === "in_flight" &&
+        beforeAssignee !== undefined &&
+        beforeAssignee === text(found.bead.assignee),
+    };
   }
 
   async addDep(id: string, dep: Dep): Promise<boolean> {
