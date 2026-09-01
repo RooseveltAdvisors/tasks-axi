@@ -57,6 +57,11 @@ export interface Dep {
   reason?: string;
 }
 
+export interface NativeBlocker {
+  id: string;
+  status: string;
+}
+
 export interface Task {
   /** Join key: "homemux-h7". Caller-supplied or minted slug-xx. */
   id: string;
@@ -74,6 +79,8 @@ export interface Task {
   links: TaskLink[];
   /** Typed dependency edges (firstmate uses blocked-by today). */
   deps: Dep[];
+  /** Native backend blockers, when a backend supplies them. */
+  native_blockers?: NativeBlocker[];
   /** Structured dispatch hold. Active holds keep queued work out of ready. */
   hold?: Hold;
   /** 0-4, optional (borrowed from beads; firstmate orders by list position). */

@@ -14,6 +14,7 @@ import {
 import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
 import { requireCtx, type TasksContext } from "../context.js";
 import {
+  activeBlockers,
   blockedIds,
   heldTasks,
   readyPublicFollowups,
@@ -698,6 +699,9 @@ export async function depsCommand(
   const all = await withDependencyTargets(store, [
     { ...task, deps: items.map((dependency) => ({ ...dependency })) },
   ]);
+  const blockers = new Set(
+    task.state === "done" ? [] : activeBlockers(task, all),
+  );
   const byId = new Map(all.map((candidate) => [candidate.id, candidate]));
   const rows = items.map((dependency) => {
     const target = byId.get(dependency.id);
@@ -705,13 +709,7 @@ export async function depsCommand(
       type: dependency.type,
       id: dependency.id,
       state: target?.state ?? "missing",
-      blocking:
-        task.state !== "done" &&
-        dependency.type === "blocked-by" &&
-        target !== undefined &&
-        target.state !== "done"
-          ? "yes"
-          : "no",
+      blocking: blockers.has(dependency.id) ? "yes" : "no",
       reason: dependency.reason ?? "-",
     };
   });

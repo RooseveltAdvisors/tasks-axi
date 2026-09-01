@@ -28,6 +28,7 @@ import type {
   TaskUpdateChange,
   TaskUpdateResult,
   TransitionOpts,
+  NativeBlocker,
 } from "../model.js";
 import type {
   Capabilities,
@@ -40,6 +41,7 @@ const execFile = promisify(execFileCallback);
 const META_PREFIX = "<!-- tasks-axi:beads/v1:";
 const META_SUFFIX = " -->";
 const HELD_LABEL = "tasks-axi-held";
+const HYDRATION_CONCURRENCY = 8;
 
 export type BeadsRunner = (
   binary: string,
@@ -153,11 +155,50 @@ function depTarget(item: Bead): string | undefined {
   return text(item.depends_on_id ?? item.to_id ?? item.blocker_id);
 }
 
+interface NativeBlockerRef {
+  id: string;
+  status?: string;
+}
+
+function nativeBlockerRefs(bead: Bead): NativeBlockerRef[] | undefined {
+  const value = Object.hasOwn(bead, "blocked_by")
+    ? bead.blocked_by
+    : bead.blockedBy;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const blocker = typeof item === "string" ? { id: item } : record(item);
+    const id = text(blocker.id ?? blocker.issue_id);
+    if (!id) return [];
+    const status = text(blocker.status);
+    return [{ id, ...(status ? { status } : {}) }];
+  });
+}
+
+async function eachBounded<T>(
+  values: T[],
+  worker: (value: T) => Promise<void>,
+): Promise<void> {
+  for (
+    let offset = 0;
+    offset < values.length;
+    offset += HYDRATION_CONCURRENCY
+  ) {
+    await Promise.all(
+      values.slice(offset, offset + HYDRATION_CONCURRENCY).map(worker),
+    );
+  }
+}
+
 function depKey(dep: Dep): string {
   return `${dep.type}:${dep.id}`;
 }
 
-function taskFromBead(bead: Bead, deps: Dep[]): Task {
+function taskFromBead(
+  bead: Bead,
+  deps: Dep[],
+  nativeBlockers?: NativeBlocker[],
+): Task {
   const decoded = decodeDescription(bead.description);
   const metadata = decoded.meta;
   const issueType = text(bead.issue_type);
@@ -190,6 +231,9 @@ function taskFromBead(bead: Bead, deps: Dep[]): Task {
   if (date(bead.updated_at)) task.updated = date(bead.updated_at);
   if (date(bead.closed_at)) task.closed = date(bead.closed_at);
   if (metadata.meta) task.meta = metadata.meta;
+  if (nativeBlockers !== undefined) {
+    task.native_blockers = nativeBlockers.map((blocker) => ({ ...blocker }));
+  }
   return task;
 }
 
@@ -287,34 +331,85 @@ export class BeadsStore implements Store {
   }
 
   private async depsFor(ids: string[]): Promise<Map<string, Dep[]>> {
-    const result = new Map<string, Dep[]>(ids.map((id) => [id, []]));
-    await Promise.all(
-      ids.map(async (id) => {
-        const items = jsonItems(
-          await this.call("dep list", ["dep", "list", id, "--json"]),
-        );
-        for (const item of items) {
-          const owner = depOwner(item) ?? id;
-          const target = depTarget(item) ?? text(item.id);
-          const type = depType(item.type ?? item.dependency_type);
-          if (owner !== id || !target || !type) continue;
-          result.get(id)?.push({ type, id: target });
-        }
-      }),
-    );
+    const uniqueIds = [...new Set(ids)];
+    const result = new Map<string, Dep[]>(uniqueIds.map((id) => [id, []]));
+    await eachBounded(uniqueIds, async (id) => {
+      const items = jsonItems(
+        await this.call("dep list", ["dep", "list", id, "--json"]),
+      );
+      for (const item of items) {
+        const owner = depOwner(item) ?? id;
+        const target = depTarget(item) ?? text(item.id);
+        const type = depType(item.type ?? item.dependency_type);
+        if (owner !== id || !target || !type) continue;
+        result.get(id)?.push({ type, id: target });
+      }
+    });
     return result;
   }
 
-  private async tasks(value: unknown): Promise<Task[]> {
+  private async statusesFor(ids: string[]): Promise<Map<string, string>> {
+    const statuses = new Map<string, string>();
+    await eachBounded([...new Set(ids)], async (id) => {
+      const raw = await this.call("show", ["show", id, "--json"], true);
+      const bead = jsonItems(raw)[0];
+      const status = bead ? text(bead.status) : undefined;
+      if (status) statuses.set(id, status);
+    });
+    return statuses;
+  }
+
+  private async nativeBlockersFor(
+    beads: Bead[],
+    mode: "ready" | "blocked",
+  ): Promise<Map<string, NativeBlocker[]>> {
+    const refs = new Map<string, NativeBlockerRef[]>();
+    for (const bead of beads) {
+      const id = text(bead.id);
+      if (!id) continue;
+      if (mode === "ready") {
+        refs.set(id, []);
+        continue;
+      }
+      const blockers = nativeBlockerRefs(bead);
+      if (blockers !== undefined) refs.set(id, blockers);
+    }
+    const blockerIds = [
+      ...new Set(
+        [...refs.values()]
+          .flat()
+          .map((blocker) => blocker.id)
+          .filter((id) => id !== ""),
+      ),
+    ];
+    const statuses = await this.statusesFor(blockerIds);
+    return new Map(
+      [...refs.entries()].map(([id, blockers]) => [
+        id,
+        blockers.map((blocker) => ({
+          id: blocker.id,
+          status: blocker.status ?? statuses.get(blocker.id) ?? "unknown",
+        })),
+      ]),
+    );
+  }
+
+  private async tasks(
+    value: unknown,
+    nativeMode?: "ready" | "blocked",
+  ): Promise<Task[]> {
     const beads = jsonItems(value);
     const deps = await this.depsFor(
       beads
         .map((bead) => text(bead.id))
         .filter((id): id is string => id !== undefined),
     );
+    const native = nativeMode
+      ? await this.nativeBlockersFor(beads, nativeMode)
+      : undefined;
     return beads.map((bead) => {
       const id = text(bead.id) ?? "";
-      return taskFromBead(bead, deps.get(id) ?? []);
+      return taskFromBead(bead, deps.get(id) ?? [], native?.get(id));
     });
   }
 
@@ -373,9 +468,40 @@ export class BeadsStore implements Store {
     return queryTasks(items, query);
   }
 
+  private async reconcileExpiredDeferrals(): Promise<void> {
+    const beads = jsonItems(
+      await this.call("list", [
+        "list",
+        "--all",
+        "--no-pager",
+        "-n",
+        "0",
+        "--json",
+      ]),
+    );
+    for (const bead of beads) {
+      const id = text(bead.id);
+      const task = taskFromBead(bead, []);
+      if (
+        !id ||
+        task.state !== "queued" ||
+        !task.hold?.until ||
+        !date(bead.defer_until) ||
+        isHoldActive(task)
+      ) {
+        continue;
+      }
+      await this.call("update", ["update", id, "--defer", "", "--json"]);
+    }
+  }
+
   async ready(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
+    await this.reconcileExpiredDeferrals();
     const items = (
-      await this.tasks(await this.call("ready", ["ready", "-n", "0", "--json"]))
+      await this.tasks(
+        await this.call("ready", ["ready", "-n", "0", "--json"]),
+        "ready",
+      )
     ).filter((task) => !isHoldActive(task));
     return queryTasks(items, query);
   }
@@ -383,6 +509,7 @@ export class BeadsStore implements Store {
   async blocked(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
     const items = await this.tasks(
       await this.call("blocked", ["blocked", "--json"]),
+      "blocked",
     );
     return queryTasks(items, query);
   }
@@ -390,8 +517,15 @@ export class BeadsStore implements Store {
   async deps(id: string): Promise<DependencyQueryResult> {
     const found = await this.bead(id);
     if (!found) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
+    const blocked = await this.nativeBlockersFor(
+      jsonItems(await this.call("blocked", ["blocked", "--json"])),
+      "blocked",
+    );
     return {
-      task: found.task,
+      task: {
+        ...found.task,
+        native_blockers: blocked.get(id) ?? [],
+      },
       items: found.task.deps.map((dep) => ({ ...dep })),
     };
   }

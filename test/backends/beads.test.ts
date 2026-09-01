@@ -24,7 +24,7 @@ function fakeBd(ignore: string[] = []) {
         id,
         title,
         description: ignore.includes("create description") ? "" : description,
-        status: "open",
+        status: args.includes("--defer") ? "deferred" : "open",
         priority: args.includes("--priority")
           ? Number(args[args.indexOf("--priority") + 1])
           : 2,
@@ -47,14 +47,35 @@ function fakeBd(ignore: string[] = []) {
           (edge) =>
             edge.issue_id === id &&
             edge.type === "blocks" &&
-            beads.get(edge.depends_on_id)?.status !== "closed",
+            beads.get(edge.depends_on_id)?.status !== "closed" &&
+            beads.get(edge.depends_on_id)?.status !== "pinned",
         );
+      const blockersFor = (id: string) =>
+        edges
+          .filter(
+            (edge) =>
+              edge.issue_id === id &&
+              edge.type === "blocks" &&
+              beads.get(edge.depends_on_id)?.status !== "closed" &&
+              beads.get(edge.depends_on_id)?.status !== "pinned",
+          )
+          .map((edge) => ({
+            id: edge.depends_on_id,
+            status: beads.get(edge.depends_on_id)?.status,
+          }));
       const items = [...beads.values()].filter((bead) => {
         if (bead.status !== "open") return false;
         const blocked = activeBlocker(String(bead.id));
         return command === "blocked" ? blocked : !blocked;
       });
-      return { stdout: JSON.stringify(items), stderr: "" };
+      const output =
+        command === "blocked"
+          ? items.map((bead) => ({
+              ...bead,
+              blocked_by: blockersFor(String(bead.id)),
+            }))
+          : items;
+      return { stdout: JSON.stringify(output), stderr: "" };
     } else if (command === "list") {
       return { stdout: JSON.stringify([...beads.values()]), stderr: "" };
     } else if (command === "dep") {
@@ -100,8 +121,11 @@ function fakeBd(ignore: string[] = []) {
       if (!ignore.includes("update native")) {
         if (args.includes("--add-label")) bead.labels = ["tasks-axi-held"];
         if (args.includes("--remove-label")) bead.labels = [];
-        if (args.includes("--defer"))
+        if (args.includes("--defer")) {
           bead.defer_until = args[args.indexOf("--defer") + 1];
+          if (bead.defer_until) bead.status = "deferred";
+          else if (bead.status === "deferred") bead.status = "open";
+        }
       }
     } else if (command === "close") {
       const bead = beads.get(args[1]);
@@ -234,6 +258,33 @@ describe("BeadsStore", () => {
     });
   });
 
+  it("reconciles expired native deferrals before ready", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run: fake.run,
+    });
+
+    await store.create({
+      id: "bd-expired",
+      title: "expired hold",
+      hold: { reason: "temporary", until: "2000-01-01" },
+    });
+    expect(fake.beads.get("bd-expired")).toMatchObject({
+      status: "deferred",
+      defer_until: "2000-01-01",
+    });
+
+    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+      "bd-expired",
+    );
+    expect(fake.beads.get("bd-expired")).toMatchObject({
+      status: "open",
+      defer_until: "",
+    });
+  });
+
   it("uses native ready, blocked, claim, and dependency operations", async () => {
     const fake = fakeBd();
     const store = new BeadsStore({
@@ -264,11 +315,17 @@ describe("BeadsStore", () => {
     ]);
     const blocked = await store.blocked({});
     expect(blocked.items.map((task) => task.id)).toEqual(["fm-blocked"]);
+    expect(blocked.items[0]).toMatchObject({
+      native_blockers: [{ id: "fm-blocker", status: "open" }],
+    });
     const blocker = await store.get("fm-blocker");
     expect(blockedIds([...blocked.items, blocker!]).has("fm-blocked")).toBe(
       true,
     );
     await expect(store.deps("fm-blocked")).resolves.toMatchObject({
+      task: {
+        native_blockers: [{ id: "fm-blocker", status: "open" }],
+      },
       items: [
         {
           type: "blocked-by",
@@ -293,6 +350,66 @@ describe("BeadsStore", () => {
     expect((await store.ready({})).items.map((task) => task.id)).toContain(
       "fm-blocked",
     );
+  });
+
+  it("keeps native pinned blockers out of blocked projections", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: fake.run,
+    });
+    await store.create({ id: "fm-pinned", title: "pinned" });
+    await store.create({ id: "fm-dependent", title: "dependent" });
+    await store.addDep("fm-dependent", {
+      type: "blocked-by",
+      id: "fm-pinned",
+    });
+    fake.beads.get("fm-pinned")!.status = "pinned";
+
+    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+      "fm-dependent",
+    );
+    expect((await store.blocked({})).items).toEqual([]);
+    await expect(store.deps("fm-dependent")).resolves.toMatchObject({
+      task: { native_blockers: [] },
+    });
+  });
+
+  it("bounds dependency hydration concurrency", async () => {
+    const fake = fakeBd();
+    let active = 0;
+    let maximum = 0;
+    const run: BeadsRunner = async (binary, args, cwd) => {
+      if (args[0] === "dep" && args[1] === "list") {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        try {
+          return await fake.run(binary, args, cwd);
+        } finally {
+          active -= 1;
+        }
+      }
+      return fake.run(binary, args, cwd);
+    };
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run,
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await store.create({
+        id: `bd-hydrate-${index}`,
+        title: `hydrate ${index}`,
+      });
+    }
+
+    active = 0;
+    maximum = 0;
+    await expect(store.list({})).resolves.toMatchObject({ total: 20 });
+    expect(maximum).toBeGreaterThan(1);
+    expect(maximum).toBeLessThanOrEqual(8);
   });
 
   it("allows exactly one actor to claim a Beads task", async () => {

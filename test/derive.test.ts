@@ -111,4 +111,21 @@ describe("derive", () => {
     expect(blockedIds(withReasons).has("p")).toBe(true);
     expect(readyTasks(withReasons).map((t) => t.id)).toEqual([]);
   });
+
+  it("uses native blocker status for backend-native projections", () => {
+    const pinned = task("pinned", "queued");
+    const child = {
+      ...task("child", "queued", [{ type: "blocked-by", id: "pinned" }]),
+      native_blockers: [{ id: "pinned", status: "pinned" }],
+    };
+    expect(blockedIds([child, pinned]).has("child")).toBe(false);
+    expect(activeBlockers(child, [child, pinned])).toEqual([]);
+
+    const active = {
+      ...child,
+      native_blockers: [{ id: "pinned", status: "in_progress" }],
+    };
+    expect(blockedIds([active, pinned]).has("child")).toBe(true);
+    expect(activeBlockers(active, [active, pinned])).toEqual(["pinned"]);
+  });
 });

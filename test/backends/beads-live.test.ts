@@ -96,10 +96,16 @@ describe.skipIf(!hasBd)("BeadsStore live bd round-trip", () => {
       const blocked = await first.blocked({});
       const blocker = await first.get("fx-blocker");
       expect(blocked.items.map((task) => task.id)).toEqual(["fx-dependent"]);
+      expect(blocked.items[0]).toMatchObject({
+        native_blockers: [{ id: "fx-blocker", status: "open" }],
+      });
       expect(blockedIds([...blocked.items, blocker!]).has("fx-dependent")).toBe(
         true,
       );
       await expect(first.deps("fx-dependent")).resolves.toMatchObject({
+        task: {
+          native_blockers: [{ id: "fx-blocker", status: "open" }],
+        },
         items: [
           {
             type: "blocked-by",
