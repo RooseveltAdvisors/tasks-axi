@@ -213,6 +213,14 @@ describe("BeadsStore", () => {
     expect((await store.get("fm-tasks-axi-beads"))?.deps).toEqual([
       { type: "blocked-by", id: "fm-blocker", reason: "waits on refactor" },
     ]);
+    expect((await store.get("fm-tasks-axi-beads"))?.native_blockers).toEqual([
+      { id: "fm-blocker", status: "open" },
+    ]);
+    expect(
+      (
+        await store.list({})
+      ).items.find((task) => task.id === "fm-tasks-axi-beads")?.native_blockers,
+    ).toEqual([{ id: "fm-blocker", status: "open" }]);
     await store.update("fm-tasks-axi-beads", { body: "updated notes" });
     expect(
       (await store.list({})).items.find(
@@ -318,6 +326,14 @@ describe("BeadsStore", () => {
     expect(blocked.items[0]).toMatchObject({
       native_blockers: [{ id: "fm-blocker", status: "open" }],
     });
+    expect(
+      (await store.list({})).items.find((task) => task.id === "fm-blocked"),
+    ).toMatchObject({
+      native_blockers: [{ id: "fm-blocker", status: "open" }],
+    });
+    await expect(store.get("fm-blocked")).resolves.toMatchObject({
+      native_blockers: [{ id: "fm-blocker", status: "open" }],
+    });
     const blocker = await store.get("fm-blocker");
     expect(blockedIds([...blocked.items, blocker!]).has("fm-blocked")).toBe(
       true,
@@ -370,8 +386,41 @@ describe("BeadsStore", () => {
       "fm-dependent",
     );
     expect((await store.blocked({})).items).toEqual([]);
+    const listed = await store.list({});
+    expect(listed.items.find((task) => task.id === "fm-dependent")).toMatchObject(
+      { native_blockers: [] },
+    );
+    expect(blockedIds(listed.items).has("fm-dependent")).toBe(false);
+    await expect(store.get("fm-dependent")).resolves.toMatchObject({
+      native_blockers: [],
+    });
     await expect(store.deps("fm-dependent")).resolves.toMatchObject({
       task: { native_blockers: [] },
+    });
+  });
+
+  it("preserves newer native deferrals during expiry reconciliation", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run: fake.run,
+    });
+
+    await store.create({
+      id: "bd-newer-defer",
+      title: "newer defer",
+      hold: { reason: "temporary", until: "2000-01-01" },
+    });
+    const bead = fake.beads.get("bd-newer-defer");
+    if (bead) bead.defer_until = "2999-01-01";
+
+    expect((await store.ready({})).items.map((task) => task.id)).not.toContain(
+      "bd-newer-defer",
+    );
+    expect(bead).toMatchObject({
+      status: "deferred",
+      defer_until: "2999-01-01",
     });
   });
 

@@ -394,9 +394,30 @@ export class BeadsStore implements Store {
     );
   }
 
+  private async nativeBlockedProjection(): Promise<
+    Map<string, NativeBlocker[]>
+  > {
+    return this.nativeBlockersFor(
+      jsonItems(await this.call("blocked", ["blocked", "--json"])),
+      "blocked",
+    );
+  }
+
+  private async nativeBlockersForBeads(
+    beads: Bead[],
+  ): Promise<Map<string, NativeBlocker[]>> {
+    const blocked = await this.nativeBlockedProjection();
+    return new Map(
+      beads
+        .map((bead) => text(bead.id))
+        .filter((id): id is string => id !== undefined)
+        .map((id) => [id, blocked.get(id) ?? []] as const),
+    );
+  }
+
   private async tasks(
     value: unknown,
-    nativeMode?: "ready" | "blocked",
+    native?: "ready" | "blocked" | Map<string, NativeBlocker[]>,
   ): Promise<Task[]> {
     const beads = jsonItems(value);
     const deps = await this.depsFor(
@@ -404,23 +425,41 @@ export class BeadsStore implements Store {
         .map((bead) => text(bead.id))
         .filter((id): id is string => id !== undefined),
     );
-    const native = nativeMode
-      ? await this.nativeBlockersFor(beads, nativeMode)
-      : undefined;
+    const nativeBlockers =
+      typeof native === "string"
+        ? await this.nativeBlockersFor(beads, native)
+        : native;
     return beads.map((bead) => {
       const id = text(bead.id) ?? "";
-      return taskFromBead(bead, deps.get(id) ?? [], native?.get(id));
+      return taskFromBead(
+        bead,
+        deps.get(id) ?? [],
+        nativeBlockers ? nativeBlockers.get(id) ?? [] : undefined,
+      );
     });
   }
 
-  private async bead(id: string): Promise<{ bead: Bead; task: Task } | null> {
+  private async bead(
+    id: string,
+    includeNativeBlockers = false,
+  ): Promise<{ bead: Bead; task: Task } | null> {
     const raw = await this.call("show", ["show", id, "--json"], true);
     if (raw === null) return null;
     const items = jsonItems(raw);
     const bead = items[0];
     if (!bead || !text(bead.id)) return null;
     const deps = await this.depsFor([id]);
-    return { bead, task: taskFromBead(bead, deps.get(id) ?? []) };
+    const nativeBlockers = includeNativeBlockers
+      ? await this.nativeBlockersForBeads([bead])
+      : undefined;
+    return {
+      bead,
+      task: taskFromBead(
+        bead,
+        deps.get(id) ?? [],
+        nativeBlockers?.get(id),
+      ),
+    };
   }
 
   private async setDepReason(
@@ -450,12 +489,12 @@ export class BeadsStore implements Store {
   }
 
   async get(id: string): Promise<Task | null> {
-    const found = await this.bead(id);
+    const found = await this.bead(id, true);
     return found?.task ?? null;
   }
 
   async list(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
-    const items = await this.tasks(
+    const beads = jsonItems(
       await this.call("list", [
         "list",
         "--all",
@@ -464,6 +503,10 @@ export class BeadsStore implements Store {
         "0",
         "--json",
       ]),
+    );
+    const items = await this.tasks(
+      beads,
+      await this.nativeBlockersForBeads(beads),
     );
     return queryTasks(items, query);
   }
@@ -486,7 +529,7 @@ export class BeadsStore implements Store {
         !id ||
         task.state !== "queued" ||
         !task.hold?.until ||
-        !date(bead.defer_until) ||
+        date(bead.defer_until) !== task.hold.until ||
         isHoldActive(task)
       ) {
         continue;
@@ -515,17 +558,10 @@ export class BeadsStore implements Store {
   }
 
   async deps(id: string): Promise<DependencyQueryResult> {
-    const found = await this.bead(id);
+    const found = await this.bead(id, true);
     if (!found) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
-    const blocked = await this.nativeBlockersFor(
-      jsonItems(await this.call("blocked", ["blocked", "--json"])),
-      "blocked",
-    );
     return {
-      task: {
-        ...found.task,
-        native_blockers: blocked.get(id) ?? [],
-      },
+      task: found.task,
       items: found.task.deps.map((dep) => ({ ...dep })),
     };
   }
