@@ -324,9 +324,15 @@ export class BeadsStore implements Store {
       ) {
         return null;
       }
-      throw new AxiError(`beads ${verb} failed`, "UNKNOWN", [
-        `Check the beads CLI and workspace, then retry`,
-      ]);
+      const stderr =
+        error && typeof error === "object"
+          ? String((error as { stderr?: string }).stderr ?? "").trim()
+          : "";
+      throw new AxiError(
+        `beads ${verb} failed${stderr ? `: ${stderr}` : ""}`,
+        "UNKNOWN",
+        [`Check the beads CLI and workspace, then retry`],
+      );
     }
   }
 
@@ -623,7 +629,7 @@ export class BeadsStore implements Store {
     if (input.state === "done")
       await this.call("close", ["close", input.id, "--json"]);
     for (const dep of input.deps ?? []) await this.addDep(input.id, dep);
-    const found = await this.bead(input.id);
+    const found = await this.bead(input.id, true);
     if (!found)
       throw new AxiError(
         `beads create did not return "${input.id}"`,
@@ -671,7 +677,7 @@ export class BeadsStore implements Store {
   }
 
   async update(id: string, patch: TaskPatch): Promise<TaskUpdateResult> {
-    const found = await this.bead(id);
+    const found = await this.bead(id, true);
     const current = found?.task;
     if (!current || !found)
       throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
@@ -779,7 +785,7 @@ export class BeadsStore implements Store {
         "--json",
       ]);
     }
-    const updated = await this.bead(id);
+    const updated = await this.bead(id, true);
     if (!updated) throw new AxiError(`beads update removed "${id}"`, "UNKNOWN");
     if (changed.includes("hold")) {
       const labels = Array.isArray(updated.bead.labels)
@@ -890,7 +896,7 @@ export class BeadsStore implements Store {
     const before = await this.bead(id);
     if (!before) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
     await this.call("claim", ["update", id, "--claim", "--json"]);
-    const found = await this.bead(id);
+    const found = await this.bead(id, true);
     if (!found) throw new AxiError(`beads claim removed "${id}"`, "UNKNOWN");
     if (found.task.state !== "in_flight") {
       throw new AxiError(
