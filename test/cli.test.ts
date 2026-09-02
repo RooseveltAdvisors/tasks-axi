@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -149,22 +148,24 @@ describe("CLI entrypoint", () => {
 
   it("ignores a legacy --file when showing from the configured beads source", async () => {
     const beadsPath = join(dir, "configured", ".beads");
+    const beadsCwd = dirname(beadsPath);
     const legacyPath = join(dir, "legacy-backlog.md");
     const callLog = join(dir, "bd-calls.jsonl");
-    const fakeBd = join(dir, "fake-bd.mjs");
-    mkdirSync(dirname(beadsPath), { recursive: true });
+    const fakeBd = join(dir, "fake-bd.cjs");
+    mkdirSync(beadsCwd, { recursive: true });
     writeFileSync(legacyPath, "legacy markdown source\n", "utf8");
     writeFileSync(
       fakeBd,
-      `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+      `const { appendFileSync } = require("node:fs");
+const { basename } = require("node:path");
 
-const args = process.argv.slice(2);
+const verb = basename(process.argv[1]);
+const args = [verb, ...process.argv.slice(2)];
 appendFileSync(
   process.env.TASKS_AXI_BD_LOG,
   JSON.stringify({ args, cwd: process.cwd() }) + "\\n",
 );
-if (args[0] === "show") {
+if (verb === "show") {
   process.stdout.write(
     JSON.stringify([{ id: args[1], title: "from configured beads", status: "open" }]),
   );
@@ -174,14 +175,20 @@ if (args[0] === "show") {
 `,
       "utf8",
     );
-    chmodSync(fakeBd, 0o755);
+    for (const verb of ["show", "dep", "blocked", "list"]) {
+      writeFileSync(
+        join(beadsCwd, verb),
+        `require(${JSON.stringify(fakeBd)});\n`,
+        "utf8",
+      );
+    }
     writeFileSync(
       join(dir, ".tasks.toml"),
       [
         'backend = "beads"',
         "[beads]",
         `path = "${beadsPath}"`,
-        `binary = "${fakeBd}"`,
+        `binary = "${process.execPath}"`,
         'prefix = "bd"',
       ].join("\n"),
       "utf8",
