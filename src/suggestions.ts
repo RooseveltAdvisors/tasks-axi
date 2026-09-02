@@ -10,6 +10,8 @@ export interface SuggestionContext {
   isEmpty?: boolean;
   /** A blocked task suggests unblocking; an empty ready list suggests listing. */
   blocked?: boolean;
+  /** The active backend can atomically claim a ready task. */
+  claimable?: boolean;
   /**
    * The resulting state after a mutation. Lets hints stay state-aware so a
    * command never suggests an action it just performed (e.g. no "run start"
@@ -86,8 +88,25 @@ const table: Entry[] = [
       ]),
   },
   {
+    match: (c) => c.action === "ready" && c.claimable === true,
+    lines: () => ["Run `tasks-axi claim <id>` to claim one exclusively"],
+  },
+  {
     match: (c) => c.action === "ready",
     lines: () => ["Run `tasks-axi start <id>` to dispatch one of these"],
+  },
+  {
+    match: (c) => c.action === "blocked" && c.isEmpty === true,
+    lines: (c) =>
+      compact([
+        suggestionLine("Run `tasks-axi ready` to see dispatchable work", c, [
+          "repo",
+        ]),
+      ]),
+  },
+  {
+    match: (c) => c.action === "blocked",
+    lines: () => ["Run `tasks-axi deps <id>` to inspect a blocked task"],
   },
   {
     match: (c) => c.action === "show" && c.blocked === true,
@@ -120,6 +139,10 @@ const table: Entry[] = [
   },
   {
     match: (c) => c.action === "start",
+    lines: (c) => [`Run \`tasks-axi done ${c.id} --pr <url>\` when it ships`],
+  },
+  {
+    match: (c) => c.action === "claim",
     lines: (c) => [`Run \`tasks-axi done ${c.id} --pr <url>\` when it ships`],
   },
   {

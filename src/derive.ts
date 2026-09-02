@@ -22,9 +22,9 @@ export function currentLocalDate(): string {
 }
 
 /**
- * Derived `blocked` / `ready` / `held` projections, computed in the CLI from
- * the full task list, dependency graph, and structured hold tags (report §8:
- * these are not Store methods, so every backend gets them for free).
+ * Shared `blocked` / `ready` / `held` projections over a full task graph.
+ * Commands use these as the backend-agnostic fallback and to render derived
+ * fields even when a backend supplies native ready/blocked selection.
  *
  * A task is `blocked` iff it is not done and has a `blocked-by` edge pointing
  * at a task that exists and is not done. Command mutations reject new dangling
@@ -37,6 +37,11 @@ export function blockedIds(tasks: Task[]): Set<string> {
   const blocked = new Set<string>();
   for (const task of tasks) {
     if (task.state === "done") continue;
+    const nativeBlockers = activeNativeBlockers(task);
+    if (nativeBlockers !== undefined) {
+      if (nativeBlockers.length > 0) blocked.add(task.id);
+      continue;
+    }
     for (const dep of task.deps) {
       if (dep.type !== "blocked-by") continue;
       const blocker = byId.get(dep.id);
@@ -107,6 +112,8 @@ export function publicFollowupsByDeliveryState(
 
 /** The unresolved blocked-by edges for a task (blockers that are not done). */
 export function activeBlockers(task: Task, tasks: Task[]): string[] {
+  const nativeBlockers = activeNativeBlockers(task);
+  if (nativeBlockers !== undefined) return nativeBlockers;
   const byId = new Map(tasks.map((t) => [t.id, t]));
   return task.deps
     .filter((d) => d.type === "blocked-by")
@@ -115,4 +122,14 @@ export function activeBlockers(task: Task, tasks: Task[]): string[] {
       const blocker = byId.get(id);
       return blocker ? blocker.state !== "done" : false;
     });
+}
+
+function activeNativeBlockers(task: Task): string[] | undefined {
+  if (task.native_blockers === undefined) return undefined;
+  return task.native_blockers
+    .filter(
+      (blocker) =>
+        blocker.status !== "closed" && blocker.status !== "pinned",
+    )
+    .map((blocker) => blocker.id);
 }

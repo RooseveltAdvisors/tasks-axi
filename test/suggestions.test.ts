@@ -99,4 +99,22 @@ describe("suggestions", () => {
       "Run `tasks-axi list --state queued --repo='demo repo'` to see all queued work (incl. blocked)",
     ]);
   });
+
+  it("suggests exclusive claim when the backend supports it", () => {
+    expect(getSuggestions({ action: "ready", claimable: true })).toEqual([
+      "Run `tasks-axi claim <id>` to claim one exclusively",
+    ]);
+  });
+
+  it("carries repo scope from an empty blocked query", () => {
+    expect(
+      getSuggestions({
+        action: "blocked",
+        isEmpty: true,
+        filters: { repo: "demo repo" },
+      }),
+    ).toEqual([
+      "Run `tasks-axi ready --repo='demo repo'` to see dispatchable work",
+    ]);
+  });
 });

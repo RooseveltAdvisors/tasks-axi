@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BeadsStore, type BeadsRunner } from "../../src/backends/beads.js";
+import { blockedIds } from "../../src/derive.js";
 
 type FakeBead = Record<string, unknown>;
 
@@ -23,7 +24,7 @@ function fakeBd(ignore: string[] = []) {
         id,
         title,
         description: ignore.includes("create description") ? "" : description,
-        status: "open",
+        status: args.includes("--defer") ? "deferred" : "open",
         priority: args.includes("--priority")
           ? Number(args[args.indexOf("--priority") + 1])
           : 2,
@@ -40,6 +41,41 @@ function fakeBd(ignore: string[] = []) {
     } else if (command === "show") {
       const bead = beads.get(args[1]);
       return { stdout: JSON.stringify(bead ? [bead] : []), stderr: "" };
+    } else if (command === "ready" || command === "blocked") {
+      const activeBlocker = (id: string) =>
+        edges.some(
+          (edge) =>
+            edge.issue_id === id &&
+            edge.type === "blocks" &&
+            beads.get(edge.depends_on_id)?.status !== "closed" &&
+            beads.get(edge.depends_on_id)?.status !== "pinned",
+        );
+      const blockersFor = (id: string) =>
+        edges
+          .filter(
+            (edge) =>
+              edge.issue_id === id &&
+              edge.type === "blocks" &&
+              beads.get(edge.depends_on_id)?.status !== "closed" &&
+              beads.get(edge.depends_on_id)?.status !== "pinned",
+          )
+          .map((edge) => ({
+            id: edge.depends_on_id,
+            status: beads.get(edge.depends_on_id)?.status,
+          }));
+      const items = [...beads.values()].filter((bead) => {
+        if (bead.status !== "open") return false;
+        const blocked = activeBlocker(String(bead.id));
+        return command === "blocked" ? blocked : !blocked;
+      });
+      const output =
+        command === "blocked"
+          ? items.map((bead) => ({
+              ...bead,
+              blocked_by: blockersFor(String(bead.id)),
+            }))
+          : items;
+      return { stdout: JSON.stringify(output), stderr: "" };
     } else if (command === "list") {
       return { stdout: JSON.stringify([...beads.values()]), stderr: "" };
     } else if (command === "dep") {
@@ -72,6 +108,10 @@ function fakeBd(ignore: string[] = []) {
       const bead = beads.get(args[1]);
       if (!bead) return { stdout: "[]", stderr: "" };
       if (ignore.includes(operation)) return { stdout: "[]", stderr: "" };
+      if (args.includes("--claim")) {
+        bead.status = "in_progress";
+        bead.assignee ??= "fake-agent";
+      }
       if (args.includes("--title"))
         bead.title = args[args.indexOf("--title") + 1];
       if (args.includes("--description"))
@@ -81,8 +121,11 @@ function fakeBd(ignore: string[] = []) {
       if (!ignore.includes("update native")) {
         if (args.includes("--add-label")) bead.labels = ["tasks-axi-held"];
         if (args.includes("--remove-label")) bead.labels = [];
-        if (args.includes("--defer"))
+        if (args.includes("--defer")) {
           bead.defer_until = args[args.indexOf("--defer") + 1];
+          if (bead.defer_until) bead.status = "deferred";
+          else if (bead.status === "deferred") bead.status = "open";
+        }
       }
     } else if (command === "close") {
       const bead = beads.get(args[1]);
@@ -170,6 +213,14 @@ describe("BeadsStore", () => {
     expect((await store.get("fm-tasks-axi-beads"))?.deps).toEqual([
       { type: "blocked-by", id: "fm-blocker", reason: "waits on refactor" },
     ]);
+    expect((await store.get("fm-tasks-axi-beads"))?.native_blockers).toEqual([
+      { id: "fm-blocker", status: "open" },
+    ]);
+    expect(
+      (
+        await store.list({})
+      ).items.find((task) => task.id === "fm-tasks-axi-beads")?.native_blockers,
+    ).toEqual([{ id: "fm-blocker", status: "open" }]);
     await store.update("fm-tasks-axi-beads", { body: "updated notes" });
     expect(
       (await store.list({})).items.find(
@@ -213,6 +264,243 @@ describe("BeadsStore", () => {
     expect(await store.remove("fm-tasks-axi-beads")).toMatchObject({
       id: "fm-tasks-axi-beads",
     });
+  });
+
+  it("reconciles expired native deferrals before ready", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run: fake.run,
+    });
+
+    await store.create({
+      id: "bd-expired",
+      title: "expired hold",
+      hold: { reason: "temporary", until: "2000-01-01" },
+    });
+    expect(fake.beads.get("bd-expired")).toMatchObject({
+      status: "deferred",
+      defer_until: "2000-01-01",
+    });
+
+    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+      "bd-expired",
+    );
+    expect(fake.beads.get("bd-expired")).toMatchObject({
+      status: "open",
+      defer_until: "",
+    });
+  });
+
+  it("uses native ready, blocked, claim, and dependency operations", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: fake.run,
+    });
+    await store.create({ id: "fm-blocker", title: "blocker" });
+    await store.create({ id: "fm-blocked", title: "blocked" });
+    await store.create({ id: "fm-ready", title: "ready" });
+    await store.create({ id: "fm-unassigned", title: "unassigned" });
+    await store.create({
+      id: "fm-held",
+      title: "held",
+      hold: { reason: "captain" },
+    });
+    await store.addDep("fm-blocked", {
+      type: "blocked-by",
+      id: "fm-blocker",
+      reason: "wait for blocker",
+    });
+
+    const ready = await store.ready({});
+    expect(ready.items.map((task) => task.id)).toEqual([
+      "fm-blocker",
+      "fm-ready",
+      "fm-unassigned",
+    ]);
+    const blocked = await store.blocked({});
+    expect(blocked.items.map((task) => task.id)).toEqual(["fm-blocked"]);
+    expect(blocked.items[0]).toMatchObject({
+      native_blockers: [{ id: "fm-blocker", status: "open" }],
+    });
+    expect(
+      (await store.list({})).items.find((task) => task.id === "fm-blocked"),
+    ).toMatchObject({
+      native_blockers: [{ id: "fm-blocker", status: "open" }],
+    });
+    await expect(store.get("fm-blocked")).resolves.toMatchObject({
+      native_blockers: [{ id: "fm-blocker", status: "open" }],
+    });
+    const blocker = await store.get("fm-blocker");
+    expect(blockedIds([...blocked.items, blocker!]).has("fm-blocked")).toBe(
+      true,
+    );
+    await expect(store.deps("fm-blocked")).resolves.toMatchObject({
+      task: {
+        native_blockers: [{ id: "fm-blocker", status: "open" }],
+      },
+      items: [
+        {
+          type: "blocked-by",
+          id: "fm-blocker",
+          reason: "wait for blocker",
+        },
+      ],
+    });
+
+    await expect(store.claim("fm-ready")).resolves.toMatchObject({
+      already: false,
+      task: { id: "fm-ready", state: "in_flight" },
+    });
+    await expect(store.claim("fm-unassigned")).resolves.toMatchObject({
+      already: false,
+    });
+    await expect(store.claim("fm-unassigned")).resolves.toMatchObject({
+      already: true,
+    });
+    await store.transition("fm-blocker", "done");
+    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+      "fm-blocked",
+    );
+  });
+
+  it("keeps native pinned blockers out of blocked projections", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: fake.run,
+    });
+    await store.create({ id: "fm-pinned", title: "pinned" });
+    await store.create({ id: "fm-dependent", title: "dependent" });
+    await store.addDep("fm-dependent", {
+      type: "blocked-by",
+      id: "fm-pinned",
+    });
+    fake.beads.get("fm-pinned")!.status = "pinned";
+
+    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+      "fm-dependent",
+    );
+    expect((await store.blocked({})).items).toEqual([]);
+    const listed = await store.list({});
+    expect(listed.items.find((task) => task.id === "fm-dependent")).toMatchObject(
+      { native_blockers: [] },
+    );
+    expect(blockedIds(listed.items).has("fm-dependent")).toBe(false);
+    await expect(store.get("fm-dependent")).resolves.toMatchObject({
+      native_blockers: [],
+    });
+    await expect(store.deps("fm-dependent")).resolves.toMatchObject({
+      task: { native_blockers: [] },
+    });
+  });
+
+  it("preserves newer native deferrals during expiry reconciliation", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run: fake.run,
+    });
+
+    await store.create({
+      id: "bd-newer-defer",
+      title: "newer defer",
+      hold: { reason: "temporary", until: "2000-01-01" },
+    });
+    const bead = fake.beads.get("bd-newer-defer");
+    if (bead) bead.defer_until = "2999-01-01";
+
+    expect((await store.ready({})).items.map((task) => task.id)).not.toContain(
+      "bd-newer-defer",
+    );
+    expect(bead).toMatchObject({
+      status: "deferred",
+      defer_until: "2999-01-01",
+    });
+  });
+
+  it("bounds dependency hydration concurrency", async () => {
+    const fake = fakeBd();
+    let active = 0;
+    let maximum = 0;
+    const run: BeadsRunner = async (binary, args, cwd) => {
+      if (args[0] === "dep" && args[1] === "list") {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        try {
+          return await fake.run(binary, args, cwd);
+        } finally {
+          active -= 1;
+        }
+      }
+      return fake.run(binary, args, cwd);
+    };
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run,
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await store.create({
+        id: `bd-hydrate-${index}`,
+        title: `hydrate ${index}`,
+      });
+    }
+
+    active = 0;
+    maximum = 0;
+    await expect(store.list({})).resolves.toMatchObject({ total: 20 });
+    expect(maximum).toBeGreaterThan(1);
+    expect(maximum).toBeLessThanOrEqual(8);
+  });
+
+  it("allows exactly one actor to claim a Beads task", async () => {
+    const fake = fakeBd();
+    const runAs =
+      (actor: string): BeadsRunner =>
+      async (binary, args, cwd) => {
+        if (args[0] === "update" && args.includes("--claim")) {
+          const bead = fake.beads.get(args[1]);
+          if (!bead) throw new Error("missing test bead");
+          if (bead.assignee && bead.assignee !== actor) {
+            throw Object.assign(new Error("claim conflict"), {
+              stderr: `issue already claimed by ${String(bead.assignee)}`,
+            });
+          }
+          bead.assignee = actor;
+          bead.status = "in_progress";
+          return { stdout: JSON.stringify([bead]), stderr: "" };
+        }
+        return fake.run(binary, args, cwd);
+      };
+    const first = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: runAs("agent-one"),
+    });
+    const second = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: runAs("agent-two"),
+    });
+    await first.create({ id: "fm-exclusive", title: "exclusive" });
+
+    const claims = await Promise.allSettled([
+      first.claim("fm-exclusive"),
+      second.claim("fm-exclusive"),
+    ]);
+    expect(
+      claims.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      claims.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
   });
 
   it("reports capabilities and turns missing beads into a null get", async () => {

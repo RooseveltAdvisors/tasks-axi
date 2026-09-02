@@ -42,16 +42,27 @@ export interface PruneResult {
   ids: string[];
 }
 
+export interface DependencyQueryResult {
+  task: Task;
+  items: Dep[];
+}
+
+export interface ClaimResult {
+  task: Task;
+  already: boolean;
+}
+
 /**
  * The single narrow seam every backend implements (report §8). The CLI layer
  * (arg parsing, TOON rendering, suggestions, help) never knows which backend
- * is active. `ready`/`blocked`/`held` are derived in the CLI from `list`, the
- * dependency graph, structured hold tags, and public-followup state, so every
- * backend gets them for free.
+ * is active. `held` and public delivery readiness are derived in the CLI;
+ * `ready`, `blocked`, and dependency reads use native backend hooks when
+ * available and otherwise derive from the same core graph.
  *
  * The core contract is create/get/update/remove/list/transition/addDep/
- * removeDep/updatePublicFollowup. `prune` and `render` are optional and
- * capability-gated.
+ * removeDep/updatePublicFollowup. Backends may expose native coordination
+ * queries and exclusive claiming; the CLI falls back to the core graph for
+ * read-only queries. `prune` and `render` are optional and capability-gated.
  */
 export interface Store {
   capabilities(): Capabilities;
@@ -65,9 +76,17 @@ export interface Store {
 
   // query
   list(query: TaskQuery): Promise<{ items: Task[]; total: number }>;
+  /** Backend-native dispatchable-work query when one exists. */
+  ready?(query: TaskQuery): Promise<{ items: Task[]; total: number }>;
+  /** Backend-native blocked-work query when one exists. */
+  blocked?(query: TaskQuery): Promise<{ items: Task[]; total: number }>;
+  /** Typed dependency query, including the owning task. */
+  deps?(id: string): Promise<DependencyQueryResult>;
 
   // state + dependencies
   transition(id: string, to: State, opts?: TransitionOpts): Promise<Task>;
+  /** Atomically claim a task for the backend's current actor. */
+  claim?(id: string): Promise<ClaimResult>;
   addDep(id: string, dep: Dep): Promise<boolean>;
   removeDep(id: string, dep: Dep): Promise<boolean>;
 
