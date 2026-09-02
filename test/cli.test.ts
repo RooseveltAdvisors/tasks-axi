@@ -2,6 +2,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -214,7 +215,7 @@ if (verb === "show") {
       expect(showCalls).toHaveLength(1);
       expect(showCalls[0]).toEqual({
         args: ["show", "bd-file-compat", "--json"],
-        cwd: dirname(beadsPath),
+        cwd: realpathSync(beadsCwd),
       });
       expect(calls.every((call) => !call.args.includes("--file"))).toBe(true);
     } finally {
