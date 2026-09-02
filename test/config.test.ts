@@ -183,6 +183,30 @@ describe("resolveConfig", () => {
     });
   });
 
+  it("keeps the configured beads source when a legacy file is supplied", () => {
+    writeFileSync(
+      join(dir, ".tasks.toml"),
+      [
+        'backend = "beads"',
+        "[beads]",
+        'path = ".data/.beads"',
+      ].join("\n"),
+    );
+
+    expect(
+      resolveConfig({
+        cwd: dir,
+        home,
+        env: {},
+        file: join(dir, "legacy-backlog.md"),
+      }),
+    ).toMatchObject({
+      backend: "beads",
+      path: join(dir, "legacy-backlog.md"),
+      beadsPath: join(dir, ".data/.beads"),
+    });
+  });
+
   it("rejects negative done_keep from toml", () => {
     writeFileSync(join(dir, ".tasks.toml"), "[markdown]\ndone_keep = -1\n");
     expect(() => resolveConfig({ cwd: dir, home, env: {} })).toThrow(

@@ -1,6 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { decode } from "@toon-format/toon";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { main, TOP_HELP } from "../src/cli.js";
@@ -138,6 +145,77 @@ describe("CLI entrypoint", () => {
     expect(decodedHelp(out)).toContain(
       `Run \`tasks-axi show <id> --file=${quoteSuggestionValue(other)}\` for full notes on a task`,
     );
+  });
+
+  it("ignores a legacy --file when showing from the configured beads source", async () => {
+    const beadsPath = join(dir, "configured", ".beads");
+    const legacyPath = join(dir, "legacy-backlog.md");
+    const callLog = join(dir, "bd-calls.jsonl");
+    const fakeBd = join(dir, "fake-bd.mjs");
+    mkdirSync(dirname(beadsPath), { recursive: true });
+    writeFileSync(legacyPath, "legacy markdown source\n", "utf8");
+    writeFileSync(
+      fakeBd,
+      `#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+appendFileSync(
+  process.env.TASKS_AXI_BD_LOG,
+  JSON.stringify({ args, cwd: process.cwd() }) + "\\n",
+);
+if (args[0] === "show") {
+  process.stdout.write(
+    JSON.stringify([{ id: args[1], title: "from configured beads", status: "open" }]),
+  );
+} else {
+  process.stdout.write("[]");
+}
+`,
+      "utf8",
+    );
+    chmodSync(fakeBd, 0o755);
+    writeFileSync(
+      join(dir, ".tasks.toml"),
+      [
+        'backend = "beads"',
+        "[beads]",
+        `path = "${beadsPath}"`,
+        `binary = "${fakeBd}"`,
+        'prefix = "bd"',
+      ].join("\n"),
+      "utf8",
+    );
+    const savedBackend = process.env.TASKS_AXI_BACKEND;
+    delete process.env.TASKS_AXI_BACKEND;
+    process.env.TASKS_AXI_BD_LOG = callLog;
+    process.chdir(dir);
+
+    try {
+      const c = capture();
+      await main({
+        argv: ["show", "bd-file-compat", "--file", legacyPath],
+        stdout: c.stdout,
+      });
+
+      expect(c.read()).toContain("id: bd-file-compat");
+      const calls = readFileSync(callLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { args: string[]; cwd: string });
+      const showCalls = calls.filter((call) => call.args[0] === "show");
+      expect(showCalls).toHaveLength(1);
+      expect(showCalls[0]).toEqual({
+        args: ["show", "bd-file-compat", "--json"],
+        cwd: dirname(beadsPath),
+      });
+      expect(calls.every((call) => !call.args.includes("--file"))).toBe(true);
+    } finally {
+      if (savedBackend === undefined) delete process.env.TASKS_AXI_BACKEND;
+      else process.env.TASKS_AXI_BACKEND = savedBackend;
+      delete process.env.TASKS_AXI_BD_LOG;
+      process.chdir(savedCwd);
+    }
   });
 
   it("carries explicit global backend and file flags into suggestions", async () => {
