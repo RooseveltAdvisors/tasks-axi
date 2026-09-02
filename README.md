@@ -239,7 +239,8 @@ Single-task `mv` has the same protection; use multi-task `mv` to move its active
 ## Configuration
 
 Backend and path are resolved in this order: `--backend` / `--file` flags passed after the command, then `TASKS_AXI_BACKEND` / `TASKS_AXI_FILE` env, then a project `.tasks.toml`, then `~/.tasks-axi/config.toml`, then the defaults.
-Without an explicit Markdown path, tasks-axi uses `backlog.md` when present, then `data/backlog.md` when present, and otherwise targets `backlog.md` for future writes. The Beads path defaults to `.beads`.
+Without an explicit Markdown path, tasks-axi uses `backlog.md` when present, then `data/backlog.md` when present, and otherwise targets `backlog.md` for future writes.
+`--file` and `TASKS_AXI_FILE` steer only the Markdown backlog path; on the Beads backend the configured `[beads] path` (default `.beads`) stays the source of truth, so a legacy `--file` is accepted but ignored.
 
 ```toml
 # .tasks.toml in the project root

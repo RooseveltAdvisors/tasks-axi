@@ -11,6 +11,9 @@ import { AxiError } from "./errors.js";
  *   --backend / --file flag > TASKS_AXI_* env > project .tasks.toml >
  *   ~/.tasks-axi/config.toml > defaults (markdown, first existing
  *   backlog.md/data/backlog.md, otherwise backlog.md).
+ * --file / TASKS_AXI_FILE steer only the Markdown path; the Beads path
+ * always comes from [beads] path (default .beads) so a legacy --file
+ * never retargets the configured bd source.
  *
  * The Store seam keeps backend-specific details invisible to the CLI layer.
  */
