@@ -43,6 +43,15 @@ under a second now. Three rules keep it there, each with a regression test in
   `native_blockers`. A backend that reports native blocker state answers
   `blocked` on its own; only the derived-graph fallback (Markdown) needs `all`.
 
+One N+1 is a **known exception** to the rule, not a licence to add more:
+`statusesFor` still spends one `bd show` per distinct blocker, because real
+`bd blocked --json` omits blocker status and `nativeBlockersFor` must resolve it.
+On `list` the requested set is the whole backlog, so this — not `bd dep list`'s
+~0.05s/id in-process cost alone — is part of the residual `list` time. `bd show`
+batches ids natively; the fix is tracked as
+`tasks-axi-statusesfor-batching-followup`. Until it lands, `eachBounded` caps the
+fan-out at `HYDRATION_CONCURRENCY`, asserted by the bounding test.
+
 `test/backends/beads.test.ts`'s `fakeBd` models both `dep list` shapes and, via
 the `"blocked status"` ignore flag, real `bd blocked --json` output that omits
 blocker status — the omission is what forces a `bd show` per blocker.
@@ -126,6 +135,7 @@ Any argv shape other than exactly one version flag falls through to `runAxiCli`,
 - Migrate firstmate's own `backlog.md` onto tasks-axi (a separate firstmate-repo change).
 - sqlite backend (P2); github/jira/linear backends (P3) — slot in behind the existing `Store` seam.
 - Optional: count free-form Done lines toward the prune keep, or recognize compound ids (`a / b`).
+- `tasks-axi-statusesfor-batching-followup`: batch `statusesFor` through one `bd show <ids>`.
 
 ## Maintaining this file
 

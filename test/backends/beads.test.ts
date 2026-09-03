@@ -562,6 +562,45 @@ describe("BeadsStore", () => {
     ]);
   });
 
+  it("bounds blocker status hydration concurrency", async () => {
+    const fake = fakeBd(["blocked status"]);
+    let active = 0;
+    let maximum = 0;
+    const run: BeadsRunner = async (binary, args, cwd) => {
+      if (args[0] !== "show") return fake.run(binary, args, cwd);
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      try {
+        return await fake.run(binary, args, cwd);
+      } finally {
+        active -= 1;
+      }
+    };
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run,
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await store.create({ id: `bd-status-${index}`, title: `status ${index}` });
+      await store.create({
+        id: `bd-status-blocker-${index}`,
+        title: `blocker ${index}`,
+      });
+      await store.addDep(`bd-status-${index}`, {
+        type: "blocked-by",
+        id: `bd-status-blocker-${index}`,
+      });
+    }
+
+    active = 0;
+    maximum = 0;
+    await expect(store.list({})).resolves.toMatchObject({ total: 40 });
+    expect(maximum).toBeGreaterThan(1);
+    expect(maximum).toBeLessThanOrEqual(8);
+  });
+
   it("allows exactly one actor to claim a Beads task", async () => {
     const fake = fakeBd();
     const runAs =
