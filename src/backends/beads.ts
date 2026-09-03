@@ -349,10 +349,23 @@ export class BeadsStore implements Store {
         await this.call("dep list", ["dep", "list", ...batch, "--json"]),
       );
       for (const item of items) {
-        // A single-id request answers with the blocker beads themselves, which
-        // carry no owner; the requested id is the owner by construction.
-        const owner =
-          depOwner(item) ?? (batch.length === 1 ? batch[0] : undefined);
+        // A request that resolves exactly one id answers with the blocker beads
+        // themselves; those records carry no edge owner (their `owner` field is
+        // the assignee), so the requested id is the owner by construction. bd
+        // picks that shape by how many ids RESOLVE, not how many were passed,
+        // so the same shape from a multi-id batch means ids were skipped and
+        // the edges cannot be attributed — refuse rather than drop them.
+        const edgeOwner = depOwner(item);
+        if (edgeOwner === undefined && batch.length > 1) {
+          throw new AxiError(
+            `beads dep list answered ${batch.length} ids without edge owners`,
+            "UNKNOWN",
+            [
+              `Some requested tasks no longer exist; re-run to read the current backlog`,
+            ],
+          );
+        }
+        const owner = edgeOwner ?? batch[0];
         const target = depTarget(item) ?? text(item.id);
         const type = depType(item.type ?? item.dependency_type);
         if (!owner || !target || !type) continue;

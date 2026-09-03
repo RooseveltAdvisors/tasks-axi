@@ -33,9 +33,12 @@ under a second now. Three rules keep it there, each with a regression test in
   `list` passes the whole backlog, so the narrowing is a no-op there.
 - `depsFor` passes every id to one `bd dep list` (bd batches natively, capped by
   `DEP_BATCH_SIZE` to stay off the argv limit) instead of one call per id.
-  A **single-id** request answers with the blocker beads themselves — no owner
-  field — which is why `depOwner` falls back to the requested id; a multi-id
-  request returns proper `issue_id`/`depends_on_id` edge records.
+  A request that **resolves exactly one id** answers with the blocker beads
+  themselves — no edge-owner field — which is why `depOwner` falls back to the
+  requested id; more resolving ids return proper `issue_id`/`depends_on_id` edge
+  records. bd picks the shape by resolved ids, not passed ids, so an owner-less
+  answer to a multi-id batch means ids were skipped and the read fails loudly
+  rather than dropping the surviving task's edges.
 - `showCommand` only reads the whole backlog when the task has no
   `native_blockers`. A backend that reports native blocker state answers
   `blocked` on its own; only the derived-graph fallback (Markdown) needs `all`.

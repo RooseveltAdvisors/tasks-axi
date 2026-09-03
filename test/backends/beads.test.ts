@@ -147,22 +147,29 @@ function fakeBd(ignore: string[] = []) {
 function realDepShapeBd() {
   const fake = fakeBd();
   const run: BeadsRunner = async (binary, args, cwd) => {
-    const ids = args.slice(2).filter((arg) => !arg.startsWith("-"));
-    // Real bd answers a SINGLE-id `dep list` with the blocker beads themselves
-    // (target-only, no owner); a multi-id request returns proper edge records.
-    if (args[0] === "dep" && args[1] === "list" && ids.length === 1) {
-      const owner = args[2];
-      return {
-        stdout: JSON.stringify(
-          fake.edges
-            .filter((edge) => edge.issue_id === owner)
-            .map((edge) => ({
-              id: edge.depends_on_id,
-              dependency_type: edge.type,
-            })),
-        ),
-        stderr: "",
-      };
+    if (args[0] === "dep" && args[1] === "list") {
+      const ids = args.slice(2).filter((arg) => !arg.startsWith("-"));
+      // Real bd picks the payload shape by how many ids RESOLVE, not how many
+      // were passed: exactly one resolving id answers with the blocker beads
+      // themselves (target-only, no owner), skipping unresolvable ids with a
+      // stderr warning; more than one returns proper edge records.
+      const resolved = ids.filter((id) => fake.beads.has(id));
+      if (resolved.length === 1) {
+        return {
+          stdout: JSON.stringify(
+            fake.edges
+              .filter((edge) => edge.issue_id === resolved[0])
+              .map((edge) => ({
+                id: edge.depends_on_id,
+                dependency_type: edge.type,
+              })),
+          ),
+          stderr: ids
+            .filter((id) => !fake.beads.has(id))
+            .map((id) => `warning: resolving ${id}: not found (skipped)`)
+            .join("\n"),
+        };
+      }
     }
     return fake.run(binary, args, cwd);
   };
@@ -806,6 +813,26 @@ describe("BeadsStore", () => {
     expect((await store.get("fm-owner"))?.deps).toEqual([
       { type: "blocked-by", id: "fm-target" },
     ]);
+  });
+
+  it("refuses a multi-id dep list batch that answers without edge owners", async () => {
+    const fake = realDepShapeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        const result = await fake.run(binary, args, cwd);
+        // Another process deletes the bead between the backlog listing and its
+        // dependency hydration, so bd resolves only one of the two ids.
+        if (args[0] === "list") fake.beads.delete("fm-gone");
+        return result;
+      },
+    });
+    await store.create({ id: "fm-kept", title: "kept" });
+    await store.create({ id: "fm-gone", title: "gone" });
+    await store.addDep("fm-kept", { type: "blocked-by", id: "fm-gone" });
+
+    await expect(store.list({})).rejects.toThrow(/without edge owners/);
   });
 
   it("verifies transitions and clears dated holds", async () => {
