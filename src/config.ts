@@ -11,6 +11,9 @@ import { AxiError } from "./errors.js";
  *   --backend / --file flag > TASKS_AXI_* env > project .tasks.toml >
  *   ~/.tasks-axi/config.toml > defaults (markdown, first existing
  *   backlog.md/data/backlog.md, otherwise backlog.md).
+ * --file / TASKS_AXI_FILE steer only the Markdown path; the Beads path
+ * always comes from [beads] path (default .beads) so a legacy --file
+ * never retargets the configured bd source.
  *
  * The Store seam keeps backend-specific details invisible to the CLI layer.
  */
@@ -201,11 +204,10 @@ function resolveMarkdownPath(
 }
 
 function resolveBeadsPath(
-  explicit: string | undefined,
   tomlPath: string | undefined,
   cwd: string,
 ): string {
-  const chosen = explicit ?? tomlPath ?? ".beads";
+  const chosen = tomlPath ?? ".beads";
   return isAbsolute(chosen) ? chosen : resolve(cwd, chosen);
 }
 
@@ -259,11 +261,9 @@ export function resolveConfig(overrides: ConfigOverrides = {}): ResolvedConfig {
         ? validatePathValue(projectToml.markdown.path, "markdown.path")
         : validatePathValue(homeToml.markdown?.path, "markdown.path");
   const beadsPath =
-    explicitPath !== undefined
-      ? undefined
-      : projectToml.beads?.path !== undefined
-        ? validatePathValue(projectToml.beads.path, "beads.path")
-        : validatePathValue(homeToml.beads?.path, "beads.path");
+    projectToml.beads?.path !== undefined
+      ? validatePathValue(projectToml.beads.path, "beads.path")
+      : validatePathValue(homeToml.beads?.path, "beads.path");
   const beadsBinary =
     projectToml.beads?.binary !== undefined
       ? validatePathValue(projectToml.beads.binary, "beads.binary")
@@ -294,7 +294,7 @@ export function resolveConfig(overrides: ConfigOverrides = {}): ResolvedConfig {
     backend,
     path,
     doneKeep,
-    beadsPath: resolveBeadsPath(explicitPath, beadsPath, cwd),
+    beadsPath: resolveBeadsPath(beadsPath, cwd),
     beadsBinary: resolveBeadsBinary(beadsBinary, home),
     beadsPrefix,
   };
