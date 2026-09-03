@@ -42,6 +42,8 @@ const META_PREFIX = "<!-- tasks-axi:beads/v1:";
 const META_SUFFIX = " -->";
 const HELD_LABEL = "tasks-axi-held";
 const HYDRATION_CONCURRENCY = 8;
+/** Ids per `bd dep list` call; keeps a huge backlog off the argv length limit. */
+const DEP_BATCH_SIZE = 200;
 
 export type BeadsRunner = (
   binary: string,
@@ -339,18 +341,37 @@ export class BeadsStore implements Store {
   private async depsFor(ids: string[]): Promise<Map<string, Dep[]>> {
     const uniqueIds = [...new Set(ids)];
     const result = new Map<string, Dep[]>(uniqueIds.map((id) => [id, []]));
-    await eachBounded(uniqueIds, async (id) => {
+    // `bd dep list` takes many ids at once. Asking one id at a time costs a
+    // subprocess per task, which dominates the cost of every backlog-wide read.
+    for (let offset = 0; offset < uniqueIds.length; offset += DEP_BATCH_SIZE) {
+      const batch = uniqueIds.slice(offset, offset + DEP_BATCH_SIZE);
       const items = jsonItems(
-        await this.call("dep list", ["dep", "list", id, "--json"]),
+        await this.call("dep list", ["dep", "list", ...batch, "--json"]),
       );
       for (const item of items) {
-        const owner = depOwner(item) ?? id;
+        // A request that resolves exactly one id answers with the blocker beads
+        // themselves; those records carry no edge owner (their `owner` field is
+        // the assignee), so the requested id is the owner by construction. bd
+        // picks that shape by how many ids RESOLVE, not how many were passed,
+        // so the same shape from a multi-id batch means ids were skipped and
+        // the edges cannot be attributed — refuse rather than drop them.
+        const edgeOwner = depOwner(item);
+        if (edgeOwner === undefined && batch.length > 1) {
+          throw new AxiError(
+            `beads dep list answered ${batch.length} ids without edge owners`,
+            "UNKNOWN",
+            [
+              `Some requested tasks no longer exist; re-run to read the current backlog`,
+            ],
+          );
+        }
+        const owner = edgeOwner ?? batch[0];
         const target = depTarget(item) ?? text(item.id);
         const type = depType(item.type ?? item.dependency_type);
-        if (owner !== id || !target || !type) continue;
-        result.get(id)?.push({ type, id: target });
+        if (!owner || !target || !type) continue;
+        result.get(owner)?.push({ type, id: target });
       }
-    });
+    }
     return result;
   }
 
@@ -400,25 +421,24 @@ export class BeadsStore implements Store {
     );
   }
 
-  private async nativeBlockedProjection(): Promise<
-    Map<string, NativeBlocker[]>
-  > {
-    return this.nativeBlockersFor(
-      jsonItems(await this.call("blocked", ["blocked", "--json"])),
-      "blocked",
-    );
-  }
-
   private async nativeBlockersForBeads(
     beads: Bead[],
   ): Promise<Map<string, NativeBlocker[]>> {
-    const blocked = await this.nativeBlockedProjection();
-    return new Map(
+    const ids = new Set(
       beads
         .map((bead) => text(bead.id))
-        .filter((id): id is string => id !== undefined)
-        .map((id) => [id, blocked.get(id) ?? []] as const),
+        .filter((id): id is string => id !== undefined),
     );
+    // `bd blocked` reports the whole backlog. Narrow it to the requested ids
+    // BEFORE nativeBlockersFor resolves blocker statuses, otherwise a single
+    // `get` pays one `bd show` per blocker of every blocked task in the file.
+    const blocked = await this.nativeBlockersFor(
+      jsonItems(await this.call("blocked", ["blocked", "--json"])).filter(
+        (bead) => ids.has(text(bead.id) ?? ""),
+      ),
+      "blocked",
+    );
+    return new Map([...ids].map((id) => [id, blocked.get(id) ?? []] as const));
   }
 
   private async tasks(

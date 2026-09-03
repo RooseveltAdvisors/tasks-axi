@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BeadsStore, type BeadsRunner } from "../../src/backends/beads.js";
+import { showCommand } from "../../src/commands/crud.js";
+import { resolveConfig } from "../../src/config.js";
 import { blockedIds } from "../../src/derive.js";
 
 type FakeBead = Record<string, unknown>;
@@ -61,7 +63,11 @@ function fakeBd(ignore: string[] = []) {
           )
           .map((edge) => ({
             id: edge.depends_on_id,
-            status: beads.get(edge.depends_on_id)?.status,
+            // Real `bd blocked --json` omits blocker status, which is what
+            // forces the adapter to resolve it with a `bd show` per blocker.
+            ...(ignore.includes("blocked status")
+              ? {}
+              : { status: beads.get(edge.depends_on_id)?.status }),
           }));
       const items = [...beads.values()].filter((bead) => {
         if (bead.status !== "open") return false;
@@ -142,18 +148,28 @@ function realDepShapeBd() {
   const fake = fakeBd();
   const run: BeadsRunner = async (binary, args, cwd) => {
     if (args[0] === "dep" && args[1] === "list") {
-      const owner = args[2];
-      return {
-        stdout: JSON.stringify(
-          fake.edges
-            .filter((edge) => edge.issue_id === owner)
-            .map((edge) => ({
-              id: edge.depends_on_id,
-              dependency_type: edge.type,
-            })),
-        ),
-        stderr: "",
-      };
+      const ids = args.slice(2).filter((arg) => !arg.startsWith("-"));
+      // Real bd picks the payload shape by how many ids RESOLVE, not how many
+      // were passed: exactly one resolving id answers with the blocker beads
+      // themselves (target-only, no owner), skipping unresolvable ids with a
+      // stderr warning; more than one returns proper edge records.
+      const resolved = ids.filter((id) => fake.beads.has(id));
+      if (resolved.length === 1) {
+        return {
+          stdout: JSON.stringify(
+            fake.edges
+              .filter((edge) => edge.issue_id === resolved[0])
+              .map((edge) => ({
+                id: edge.depends_on_id,
+                dependency_type: edge.type,
+              })),
+          ),
+          stderr: ids
+            .filter((id) => !fake.beads.has(id))
+            .map((id) => `warning: resolving ${id}: not found (skipped)`)
+            .join("\n"),
+        };
+      }
     }
     return fake.run(binary, args, cwd);
   };
@@ -161,6 +177,92 @@ function realDepShapeBd() {
 }
 
 describe("BeadsStore", () => {
+  it("answers show without hydrating the whole backlog", async () => {
+    const fake = fakeBd();
+    const commands: string[] = [];
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        commands.push(args.filter((arg) => !arg.startsWith("-")).join(" "));
+        return fake.run(binary, args, cwd);
+      },
+    });
+    await store.create({ id: "fm-shown", title: "shown" });
+    await store.create({ id: "fm-blocker", title: "blocker" });
+    await store.create({ id: "fm-unrelated", title: "unrelated" });
+    await store.addDep("fm-shown", { type: "blocked-by", id: "fm-blocker" });
+
+    commands.length = 0;
+    const out = await showCommand(["fm-shown"], {
+      store,
+      config: resolveConfig({}),
+    });
+
+    expect(out).toContain("blocked: yes");
+    expect(out).toContain("blocked_by: fm-blocker");
+    // Native blocker state answers `blocked`, so no whole-backlog read.
+    expect(commands).toEqual([
+      "show fm-shown",
+      "dep list fm-shown",
+      "blocked",
+      "show fm-blocker",
+    ]);
+  });
+
+  it("resolves blocker statuses only for the requested beads", async () => {
+    const fake = fakeBd(["blocked status"]);
+    const shown: string[] = [];
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        if (args[0] === "show") shown.push(args[1]);
+        return fake.run(binary, args, cwd);
+      },
+    });
+
+    for (const id of ["wanted", "wanted-blocker", "other", "other-blocker"])
+      await store.create({ id: `fm-${id}`, title: id });
+    await store.addDep("fm-wanted", {
+      type: "blocked-by",
+      id: "fm-wanted-blocker",
+    });
+    await store.addDep("fm-other", {
+      type: "blocked-by",
+      id: "fm-other-blocker",
+    });
+
+    shown.length = 0;
+    const task = await store.get("fm-wanted");
+
+    // Status still resolved for the requested task's own blocker...
+    expect(task?.native_blockers).toEqual([
+      { id: "fm-wanted-blocker", status: "open" },
+    ]);
+    // ...but never for an unrelated blocked task's blocker.
+    expect([...new Set(shown)].sort()).toEqual([
+      "fm-wanted",
+      "fm-wanted-blocker",
+    ]);
+
+    // `list` asks for the whole backlog, so the narrowing is a no-op there.
+    shown.length = 0;
+    const listed = await store.list({});
+    expect(
+      listed.items.map((item) => [item.id, item.native_blockers ?? []]),
+    ).toEqual([
+      ["fm-wanted", [{ id: "fm-wanted-blocker", status: "open" }]],
+      ["fm-wanted-blocker", []],
+      ["fm-other", [{ id: "fm-other-blocker", status: "open" }]],
+      ["fm-other-blocker", []],
+    ]);
+    expect([...new Set(shown)].sort()).toEqual([
+      "fm-other-blocker",
+      "fm-wanted-blocker",
+    ]);
+  });
+
   it("keeps an explicitly cleared managed body empty", async () => {
     const fake = fakeBd();
     const store = new BeadsStore({
@@ -424,21 +526,12 @@ describe("BeadsStore", () => {
     });
   });
 
-  it("bounds dependency hydration concurrency", async () => {
+  it("batches dependency hydration into one dep list call", async () => {
     const fake = fakeBd();
-    let active = 0;
-    let maximum = 0;
+    const depListCalls: string[][] = [];
     const run: BeadsRunner = async (binary, args, cwd) => {
-      if (args[0] === "dep" && args[1] === "list") {
-        active += 1;
-        maximum = Math.max(maximum, active);
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        try {
-          return await fake.run(binary, args, cwd);
-        } finally {
-          active -= 1;
-        }
-      }
+      if (args[0] === "dep" && args[1] === "list")
+        depListCalls.push(args.slice(2).filter((arg) => !arg.startsWith("-")));
       return fake.run(binary, args, cwd);
     };
     const store = new BeadsStore({
@@ -446,16 +539,64 @@ describe("BeadsStore", () => {
       prefix: "bd",
       run,
     });
+    const ids: string[] = [];
     for (let index = 0; index < 20; index += 1) {
+      const id = `bd-hydrate-${index}`;
+      ids.push(id);
+      await store.create({ id, title: `hydrate ${index}` });
+    }
+    await store.addDep("bd-hydrate-0", {
+      type: "blocked-by",
+      id: "bd-hydrate-1",
+    });
+
+    depListCalls.length = 0;
+    const listed = await store.list({});
+    expect(listed.total).toBe(20);
+    // One subprocess for the whole backlog, not one per task.
+    expect(depListCalls).toEqual([ids]);
+    // Batch records still land on their own owner.
+    expect(listed.items.map((item) => item.deps)).toEqual([
+      [{ type: "blocked-by", id: "bd-hydrate-1" }],
+      ...Array.from({ length: 19 }, () => []),
+    ]);
+  });
+
+  it("bounds blocker status hydration concurrency", async () => {
+    const fake = fakeBd(["blocked status"]);
+    let active = 0;
+    let maximum = 0;
+    const run: BeadsRunner = async (binary, args, cwd) => {
+      if (args[0] !== "show") return fake.run(binary, args, cwd);
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      try {
+        return await fake.run(binary, args, cwd);
+      } finally {
+        active -= 1;
+      }
+    };
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run,
+    });
+    for (let index = 0; index < 20; index += 1) {
+      await store.create({ id: `bd-status-${index}`, title: `status ${index}` });
       await store.create({
-        id: `bd-hydrate-${index}`,
-        title: `hydrate ${index}`,
+        id: `bd-status-blocker-${index}`,
+        title: `blocker ${index}`,
+      });
+      await store.addDep(`bd-status-${index}`, {
+        type: "blocked-by",
+        id: `bd-status-blocker-${index}`,
       });
     }
 
     active = 0;
     maximum = 0;
-    await expect(store.list({})).resolves.toMatchObject({ total: 20 });
+    await expect(store.list({})).resolves.toMatchObject({ total: 40 });
     expect(maximum).toBeGreaterThan(1);
     expect(maximum).toBeLessThanOrEqual(8);
   });
@@ -711,6 +852,26 @@ describe("BeadsStore", () => {
     expect((await store.get("fm-owner"))?.deps).toEqual([
       { type: "blocked-by", id: "fm-target" },
     ]);
+  });
+
+  it("refuses a multi-id dep list batch that answers without edge owners", async () => {
+    const fake = realDepShapeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        const result = await fake.run(binary, args, cwd);
+        // Another process deletes the bead between the backlog listing and its
+        // dependency hydration, so bd resolves only one of the two ids.
+        if (args[0] === "list") fake.beads.delete("fm-gone");
+        return result;
+      },
+    });
+    await store.create({ id: "fm-kept", title: "kept" });
+    await store.create({ id: "fm-gone", title: "gone" });
+    await store.addDep("fm-kept", { type: "blocked-by", id: "fm-gone" });
+
+    await expect(store.list({})).rejects.toThrow(/without edge owners/);
   });
 
   it("verifies transitions and clears dated holds", async () => {
