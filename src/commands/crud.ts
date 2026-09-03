@@ -469,7 +469,11 @@ export async function showCommand(
   const task = await store.get(id);
   if (!task) throw notFound(id, { globals: context?.suggestionGlobals });
 
-  const all = (await store.list({})).items;
+  // A task carrying native blocker state answers `blocked` on its own; only the
+  // derived-graph fallback needs the rest of the backlog, which on a large
+  // Beads workspace costs a whole-backlog hydration for a single record.
+  const all =
+    task.native_blockers === undefined ? (await store.list({})).items : [task];
   const isBlocked = blockedIds(all).has(id);
 
   const blocks = [renderTaskDetail(task, all, full)];

@@ -19,6 +19,31 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
 - `src/commands/*` — one file per verb group; `src/view.ts` owns the read-side TOON projection; `src/confirm.ts` owns the write-side output (the `ok:` confirmation line, the `--json` payload, and `renderMutation`, which assembles both).
 - Shared helpers copied from the family: `args.ts`, `body.ts`, `format.ts`, `fields.ts`, `toon.ts`, `suggestions.ts`, `skill.ts` (minimal CLI-deferring stub generator).
 
+## Beads reads must stay proportional to the ids requested
+
+Every `bd` invocation is a subprocess that also spawns `git`, so an N+1 read is a
+fleet-visible hang, not a micro-optimization. On firstmate's real backlog one
+`show` once cost 314 `bd` + 629 `git` executions and ~127s; it is 3 + 6 and
+under a second now. Three rules keep it there, each with a regression test in
+`test/backends/beads.test.ts` that asserts on the sequence of `bd` invocations
+(never on wall-clock — timing tests are flaky):
+
+- `nativeBlockersForBeads` narrows the whole-backlog `bd blocked` projection to
+  the requested ids **before** `nativeBlockersFor` resolves blocker statuses.
+  `list` passes the whole backlog, so the narrowing is a no-op there.
+- `depsFor` passes every id to one `bd dep list` (bd batches natively, capped by
+  `DEP_BATCH_SIZE` to stay off the argv limit) instead of one call per id.
+  A **single-id** request answers with the blocker beads themselves — no owner
+  field — which is why `depOwner` falls back to the requested id; a multi-id
+  request returns proper `issue_id`/`depends_on_id` edge records.
+- `showCommand` only reads the whole backlog when the task has no
+  `native_blockers`. A backend that reports native blocker state answers
+  `blocked` on its own; only the derived-graph fallback (Markdown) needs `all`.
+
+`test/backends/beads.test.ts`'s `fakeBd` models both `dep list` shapes and, via
+the `"blocked status"` ignore flag, real `bd blocked --json` output that omits
+blocker status — the omission is what forces a `bd show` per blocker.
+
 ## Markdown grammar invariants (the hard part — do not regress)
 
 `src/backends/markdown-grammar.ts` is pure parse/render with no I/O; `markdown.ts` adds the lock + atomic write.
