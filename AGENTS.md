@@ -36,9 +36,15 @@ under a second now. Three rules keep it there, each with a regression test in
   A request that **resolves exactly one id** answers with the blocker beads
   themselves — no edge-owner field — which is why `depOwner` falls back to the
   requested id; more resolving ids return proper `issue_id`/`depends_on_id` edge
-  records. bd picks the shape by resolved ids, not passed ids, so an owner-less
-  answer to a multi-id batch means ids were skipped and the read fails loudly
-  rather than dropping the surviving task's edges.
+  records. bd picks the shape by resolved ids, not passed ids, and skipped ids
+  only warn on stderr, so the guard detects exactly one case: a multi-id batch
+  answering in the owner-less shape means every id but one was skipped and the
+  survivor would silently lose its edges, so that read fails loudly. It does
+  **not** detect the other case: when two or more ids still resolve, bd returns
+  the normal edge shape, every surviving id keeps its correct deps, and only the
+  ids that vanished mid-read render with no deps. That fail-open is deliberate —
+  another agent deleting one task on a shared backlog should not fail an entire
+  read, and the next read self-heals.
 - `showCommand` only reads the whole backlog when the task has no
   `native_blockers`. A backend that reports native blocker state answers
   `blocked` on its own; only the derived-graph fallback (Markdown) needs `all`.
