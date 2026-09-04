@@ -42,6 +42,23 @@ type ScopedFlag = keyof SuggestionFilters;
 
 const table: Entry[] = [
   {
+    match: (c) => c.action === "priorities" && c.isEmpty === true,
+    lines: (c) =>
+      compact([
+        suggestionLine('Run `tasks-axi add <id> "<title>"` to add a task', c, [
+          "repo",
+          "kind",
+        ]),
+      ]),
+  },
+  {
+    match: (c) => c.action === "priorities",
+    lines: () => [
+      "Run `tasks-axi list --fields priority,priority_why` to see per-task priorities",
+      "Run `tasks-axi ready` to see dispatchable work",
+    ],
+  },
+  {
     match: (c) => c.action === "home",
     lines: () => [
       "Run `tasks-axi list` for the full backlog",

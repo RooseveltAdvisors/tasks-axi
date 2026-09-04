@@ -11,6 +11,7 @@ import {
 import { takeBody } from "../body.js";
 import { deriveLinks, extractTags } from "../backends/markdown-grammar.js";
 import { PR_URL_EXPECTED } from "../pr-url.js";
+import { assertNoManagedPriorityWhyLine } from "../priority-why.js";
 import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
 import { requireCtx, type TasksContext } from "../context.js";
 import { blockedIds, heldTasks } from "../derive.js";
@@ -49,6 +50,7 @@ flags:
   --kind <ship|scout|docs|...>, --repo <name>, --body <text> or --body-file <path>
   --start (place in In flight) | --queue (place in Queued, default)
   --blocked-by <id> (repeatable, must exist), --pr <url>, --report <path>, --priority <0-4>
+  --why "<one line>"   only with --priority 0-1, where beads requires it
   --mint [--prefix <p>]   mint a slug-xx id from the title instead of passing one
   --json   print the resulting task as a JSON object
 examples:
@@ -79,6 +81,7 @@ flags:
   --title <text>, --body <text> or --body-file <path>
   --archive-body   with --body/--body-file, archive the previous body
   --repo <name>, --kind <name>, --priority <0-4>, --pr <url>, --report <path>
+  --why "<one line>"   only with --priority 0-1, where beads requires it
   --json   print the resulting task as a JSON object
 examples:
   tasks-axi show nm-release-validation --full
@@ -184,6 +187,29 @@ function parsePriority(raw: string | undefined): number | undefined {
   return Number(raw);
 }
 
+/**
+ * `--priority` and `--why` are one contract: a reason exists only to justify a
+ * P0/P1 claim, so a reason without that claim is a usage error rather than a
+ * note that quietly outlives the priority it was written for.
+ */
+function parsePriorityPair(args: string[]): {
+  priority: number | undefined;
+  why: string | undefined;
+} {
+  const priority = parsePriority(takeFlag(args, "--priority"));
+  const why = requireNonEmptySingleLineFlagValue(
+    "--why",
+    takeFlag(args, "--why"),
+  );
+  if (why !== undefined && (priority === undefined || priority > 1)) {
+    throw new AxiError(
+      "--why requires --priority 0 or 1 (only P0/P1 carry a reason)",
+      "VALIDATION_ERROR",
+    );
+  }
+  return { priority, why };
+}
+
 function requireTitle(
   raw: string,
   message: string,
@@ -234,9 +260,10 @@ export async function addCommand(
   const kind = requireSafeTagFlagValue("--kind", takeFlag(args, "--kind"));
   const repo = requireSafeTagFlagValue("--repo", takeFlag(args, "--repo"));
   const body = requireNonEmptyFlagValue("--body", takeBody(args));
+  if (body !== undefined) assertNoManagedPriorityWhyLine(body);
   const pr = takeFlag(args, "--pr");
   const report = takeFlag(args, "--report");
-  const priority = parsePriority(takeFlag(args, "--priority"));
+  const { priority, why } = parsePriorityPair(args);
   const deps = parseDeps(args);
   const json = takeBoolFlag(args, "--json");
   const start = takeBoolFlag(args, "--start");
@@ -335,6 +362,7 @@ export async function addCommand(
   if (repo) input.repo = repo;
   if (body !== undefined) input.body = body;
   if (priority !== undefined) input.priority = priority;
+  if (why !== undefined) input.priorityWhy = why;
 
   const task = await store.create(input);
   const all = (await store.list({})).items;
@@ -500,6 +528,7 @@ export async function updateCommand(
   const json = takeBoolFlag(args, "--json");
   const title = takeFlag(args, "--title");
   const body = takeBody(args);
+  if (body !== undefined) assertNoManagedPriorityWhyLine(body);
   const archiveBody = takeBoolFlag(args, "--archive-body");
   const repo = requireNonEmptySingleLineFlagValue(
     "--repo",
@@ -509,7 +538,7 @@ export async function updateCommand(
     "--kind",
     takeFlag(args, "--kind"),
   );
-  const priority = parsePriority(takeFlag(args, "--priority"));
+  const { priority, why } = parsePriorityPair(args);
   const pr = takeFlag(args, "--pr");
   const report = takeFlag(args, "--report");
   const positionals = requirePositionals(
@@ -548,6 +577,7 @@ export async function updateCommand(
     patch.kind = kind;
   }
   if (priority !== undefined) patch.priority = priority;
+  if (why !== undefined) patch.priorityWhy = why;
   const addLinks = parseLinks(pr, report);
   if (addLinks.length > 0) patch.addLinks = addLinks;
 
@@ -595,6 +625,7 @@ function orderUpdateChanges(changed: TaskUpdateChange[]): TaskUpdateChange[] {
     "repo",
     "kind",
     "priority",
+    "priority_why",
     "links",
     "hold",
     "meta",

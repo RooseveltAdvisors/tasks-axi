@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BeadsStore, type BeadsRunner } from "../../src/backends/beads.js";
-import { showCommand } from "../../src/commands/crud.js";
+import { addCommand, showCommand } from "../../src/commands/crud.js";
 import { resolveConfig } from "../../src/config.js";
 import { blockedIds } from "../../src/derive.js";
 
@@ -122,6 +122,8 @@ function fakeBd(ignore: string[] = []) {
         bead.title = args[args.indexOf("--title") + 1];
       if (args.includes("--description"))
         bead.description = args[args.indexOf("--description") + 1];
+      if (args.includes("--priority"))
+        bead.priority = Number(args[args.indexOf("--priority") + 1]);
       if (args.includes("--status"))
         bead.status = args[args.indexOf("--status") + 1];
       if (!ignore.includes("update native")) {
@@ -208,6 +210,26 @@ describe("BeadsStore", () => {
       "blocked",
       "show fm-blocker",
     ]);
+  });
+
+  it("rejects a beads add whose --body carries the reserved priority-why line", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    // Before the guard this reached beads create, which strips the managed
+    // line from the description and then fails its own persistence check with
+    // an internal-sounding error; the command now refuses it up front.
+    await expect(
+      addCommand(
+        ["bd-spoof-q1", "t", "--body", "priority-why: not a real reason"],
+        { store, config: resolveConfig({}) },
+      ),
+    ).rejects.toThrow(
+      'Task body must not contain the reserved "priority-why:" managed line',
+    );
+    expect(fake.beads.has("bd-spoof-q1")).toBe(false);
   });
 
   it("resolves blocker statuses only for the requested beads", async () => {
@@ -319,9 +341,9 @@ describe("BeadsStore", () => {
       { id: "fm-blocker", status: "open" },
     ]);
     expect(
-      (
-        await store.list({})
-      ).items.find((task) => task.id === "fm-tasks-axi-beads")?.native_blockers,
+      (await store.list({})).items.find(
+        (task) => task.id === "fm-tasks-axi-beads",
+      )?.native_blockers,
     ).toEqual([{ id: "fm-blocker", status: "open" }]);
     await store.update("fm-tasks-axi-beads", { body: "updated notes" });
     expect(
@@ -489,9 +511,9 @@ describe("BeadsStore", () => {
     );
     expect((await store.blocked({})).items).toEqual([]);
     const listed = await store.list({});
-    expect(listed.items.find((task) => task.id === "fm-dependent")).toMatchObject(
-      { native_blockers: [] },
-    );
+    expect(
+      listed.items.find((task) => task.id === "fm-dependent"),
+    ).toMatchObject({ native_blockers: [] });
     expect(blockedIds(listed.items).has("fm-dependent")).toBe(false);
     await expect(store.get("fm-dependent")).resolves.toMatchObject({
       native_blockers: [],
@@ -583,7 +605,10 @@ describe("BeadsStore", () => {
       run,
     });
     for (let index = 0; index < 20; index += 1) {
-      await store.create({ id: `bd-status-${index}`, title: `status ${index}` });
+      await store.create({
+        id: `bd-status-${index}`,
+        title: `status ${index}`,
+      });
       await store.create({
         id: `bd-status-blocker-${index}`,
         title: `blocker ${index}`,
@@ -961,10 +986,177 @@ describe("BeadsStore", () => {
         kind: "ship",
         repo: "tasks-axi",
         priority: 1,
+        priorityWhy: "gate fixture",
         links: [{ kind: "doc", url: "https://example.com/spec" }],
         hold: { reason: "later" },
         meta: { owner: "captain" },
       }),
     ).rejects.toThrow("did not persist requested fields");
+  });
+
+  it("creates P2 when add passes no priority", async () => {
+    const fake = fakeBd();
+    const createArgs: string[][] = [];
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: async (binary, args, cwd) => {
+        if (args[0] === "create") createArgs.push([...args]);
+        return fake.run(binary, args, cwd);
+      },
+    });
+    const task = await store.create({ id: "bd-neutral", title: "neutral" });
+
+    // The default is explicit at the tool boundary, never an implicit top slot.
+    expect(createArgs[0]).toContain("--priority");
+    expect(createArgs[0][createArgs[0].indexOf("--priority") + 1]).toBe("2");
+    expect(task.priority).toBe(2);
+    expect(fake.beads.get("bd-neutral")).toMatchObject({ priority: 2 });
+  });
+
+  it("refuses P0/P1 without --why at create and update", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+
+    await expect(
+      store.create({ id: "bd-hot-q1", title: "hot", priority: 0 }),
+    ).rejects.toThrow(
+      "--priority 0 requires --why <one line> (P0/P1 must carry a reason)",
+    );
+    await expect(
+      store.create({ id: "bd-hot-q2", title: "hot", priority: 1 }),
+    ).rejects.toThrow(
+      "--priority 1 requires --why <one line> (P0/P1 must carry a reason)",
+    );
+    await store.create({ id: "bd-cool", title: "cool" });
+    await expect(store.update("bd-cool", { priority: 1 })).rejects.toThrow(
+      "--priority 1 requires --why <one line> (P0/P1 must carry a reason)",
+    );
+    // Nothing was created or mutated by the refused commands.
+    expect(fake.beads.has("bd-hot-q1")).toBe(false);
+    expect(fake.beads.get("bd-cool")).toMatchObject({ priority: 2 });
+  });
+
+  it("persists the priority reason as a body line and echoes it back", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    const task = await store.create({
+      id: "bd-reasoned",
+      title: "reasoned",
+      body: "context notes",
+      priority: 0,
+      priorityWhy: "launch train leaves without it",
+    });
+
+    expect(task.priority).toBe(0);
+    expect(task.priority_why).toBe("launch train leaves without it");
+    expect(task.body).toBe("context notes");
+    // The stored description carries the line for humans in bd itself.
+    const description = String(fake.beads.get("bd-reasoned")?.description);
+    expect(description).toContain(
+      "priority-why: launch train leaves without it",
+    );
+
+    const updated = await store.update("bd-reasoned", {
+      priority: 1,
+      priorityWhy: "re-scored after the incident review",
+    });
+    expect(updated.changed).toEqual(["priority", "priority_why"]);
+    expect(updated.task.priority_why).toBe(
+      "re-scored after the incident review",
+    );
+    expect(String(fake.beads.get("bd-reasoned")?.description)).toContain(
+      "priority-why: re-scored after the incident review",
+    );
+    expect(
+      String(fake.beads.get("bd-reasoned")?.description).split("priority-why:")
+        .length - 1,
+    ).toBe(1);
+  });
+
+  it("retires the reason when priority rises above P1", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    await store.create({
+      id: "bd-cooling",
+      title: "cooling",
+      priority: 0,
+      priorityWhy: "was urgent",
+    });
+
+    const updated = await store.update("bd-cooling", { priority: 3 });
+    expect(updated.task.priority).toBe(3);
+    expect(updated.task.priority_why).toBeUndefined();
+    expect(String(fake.beads.get("bd-cooling")?.description)).not.toContain(
+      "priority-why:",
+    );
+  });
+
+  it("keeps the priority reason across a wholesale body replacement", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    await store.create({
+      id: "bd-guarded",
+      title: "guarded",
+      body: "old notes",
+      priority: 0,
+      priorityWhy: "survives body rewrites",
+    });
+
+    const updated = await store.update("bd-guarded", { body: "curated notes" });
+    expect(updated.changed).toEqual(["body"]);
+    expect(updated.task.body).toBe("curated notes");
+    expect(updated.task.priority_why).toBe("survives body rewrites");
+    expect(String(fake.beads.get("bd-guarded")?.description)).toContain(
+      "priority-why: survives body rewrites",
+    );
+  });
+
+  it("answers priorities from one cheap list read", async () => {
+    const fake = fakeBd();
+    const calls: string[] = [];
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: async (binary, args, cwd) => {
+        calls.push(args[0]);
+        return fake.run(binary, args, cwd);
+      },
+    });
+    await store.create({ id: "bd-a", title: "a" });
+    await store.create({
+      id: "bd-b",
+      title: "b",
+      priority: 0,
+      priorityWhy: "hot path",
+    });
+    await store.create({
+      id: "bd-c",
+      title: "c",
+      priority: 1,
+      priorityWhy: "warm path",
+    });
+    await store.create({ id: "bd-d", title: "d", priority: 4 });
+    await store.transition("bd-b", "done");
+
+    calls.length = 0;
+    const counts = await store.priorities!();
+    // The closed P0 leaves the open headline but stays in the all-time tally.
+    expect(counts).toEqual({
+      open: { counts: [0, 1, 1, 0, 1], unset: 0 },
+      all: { counts: [1, 1, 1, 0, 1], unset: 0 },
+    });
+    // A histogram must not pay the deps/blocker hydration of a full list.
+    expect(calls).toEqual(["list"]);
   });
 });

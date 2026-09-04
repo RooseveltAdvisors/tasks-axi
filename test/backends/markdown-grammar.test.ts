@@ -140,6 +140,27 @@ describe("markdown grammar", () => {
       expect(task.created).toBe("2026-07-01");
     });
 
+    it("lifts a priority-why body line into the structured field and re-renders it first", () => {
+      const src =
+        "# Backlog\n\n## Queued\n- [ ] hot-q1 - hot work (priority: 0)\n  intro paragraph\n  priority-why: the launch train leaves without it\n  outro paragraph\n";
+      const task = tasksOf(parseBacklog(src))[0];
+      expect(task.priority).toBe(0);
+      expect(task.priority_why).toBe("the launch train leaves without it");
+      expect(task.body).toBe("intro paragraph\noutro paragraph");
+      const rendered = renderTaskLines({ ...task, body: task.body }).join("\n");
+      expect(rendered).toBe(
+        "- [ ] hot-q1 - hot work (priority: 0)\n  priority-why: the launch train leaves without it\n  intro paragraph\n  outro paragraph",
+      );
+      // Deeper-indented occurrences are ordinary body (e.g. inside code blocks).
+      const nested = tasksOf(
+        parseBacklog(
+          "# Backlog\n\n## Queued\n- [ ] code-q1 - notes (priority: 1)\n      priority-why: inside a code block\n",
+        ),
+      )[0];
+      expect(nested.priority_why).toBeUndefined();
+      expect(nested.body).toBe("    priority-why: inside a code block");
+    });
+
     it("extracts structured hold tags from the trailing tag region", () => {
       const doc = parseBacklog(
         "# Backlog\n\n## Queued\n- [ ] held-q1 - wait for launch (repo: app) (hold: load clears) (hold-kind: load) (hold-until: 2999-01-01)\n",

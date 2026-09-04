@@ -1,6 +1,7 @@
 import type { PublicFollowupMutation } from "./public-followup.js";
 import type {
   Dep,
+  PriorityHistogram,
   State,
   Task,
   TaskInput,
@@ -82,6 +83,8 @@ export interface Store {
   blocked?(query: TaskQuery): Promise<{ items: Task[]; total: number }>;
   /** Typed dependency query, including the owning task. */
   deps?(id: string): Promise<DependencyQueryResult>;
+  /** Backend-native priority histogram when a cheap one exists; else derived. */
+  priorities?(): Promise<PriorityHistogram>;
 
   // state + dependencies
   transition(id: string, to: State, opts?: TransitionOpts): Promise<Task>;
