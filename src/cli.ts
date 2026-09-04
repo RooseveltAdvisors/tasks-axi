@@ -16,6 +16,7 @@ import {
   showCommand,
   updateCommand,
 } from "./commands/crud.js";
+import { PRIORITIES_HELP, prioritiesCommand } from "./commands/priorities.js";
 import {
   BLOCK_HELP,
   BLOCKED_LIST_HELP,
@@ -69,8 +70,8 @@ type MainOptions = {
 };
 
 export const TOP_HELP = `usage: tasks-axi [command] [args] [flags]
-commands[22]:
-  (none)=dashboard, add, list, show, start, claim, done, reopen, update, rm, block, unblock, deps, hold, unhold, ready, blocked, public-followup, mv, prune, render, setup
+commands[23]:
+  (none)=dashboard, add, list, show, start, claim, done, reopen, update, rm, block, unblock, deps, hold, unhold, ready, blocked, priorities, public-followup, mv, prune, render, setup
 flags[4]:
   --backend <name> (after command), --file <path> (after command), --json (mutations: machine-readable result), --help, -v/-V/--version
 examples:
@@ -83,6 +84,7 @@ examples:
   tasks-axi deps fm-x
   tasks-axi hold fm-x --reason "captain decision pending" --kind captain
   tasks-axi ready
+  tasks-axi priorities
   tasks-axi claim fm-x --backend beads --json
   tasks-axi public-followup ready --json
   tasks-axi setup hooks
@@ -113,6 +115,7 @@ const COMMANDS: Record<string, CommandFn> = {
   hold: withContext(holdCommand),
   unhold: withContext(unholdCommand),
   ready: withContext(readyCommand),
+  priorities: withContext(prioritiesCommand),
   "public-followup": withContext(publicFollowupCommand),
   mv: withContext(mvCommand),
   prune: withContext(pruneCommand),
@@ -142,6 +145,7 @@ const COMMAND_HELP: Record<string, string> = {
   hold: HOLD_HELP,
   unhold: UNHOLD_HELP,
   ready: READY_HELP,
+  priorities: PRIORITIES_HELP,
   "public-followup": PUBLIC_FOLLOWUP_HELP,
   mv: MV_HELP,
   prune: PRUNE_HELP,

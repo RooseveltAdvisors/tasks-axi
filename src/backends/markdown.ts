@@ -23,6 +23,7 @@ import type {
 } from "../model.js";
 import { HOLD_KINDS } from "../model.js";
 import { PR_URL_EXPECTED } from "../pr-url.js";
+import { normalizePriorityWhy } from "../priority-why.js";
 import {
   PUBLIC_FOLLOWUP_KIND,
   assertPublicFollowupMutation,
@@ -548,6 +549,9 @@ export class MarkdownStore implements Store {
     if (hold) task.hold = hold;
     const priority = normalizePriority(input.priority);
     if (priority !== undefined) task.priority = priority;
+    if (input.priorityWhy !== undefined) {
+      task.priority_why = normalizePriorityWhy("--why", input.priorityWhy);
+    }
     if (kind === PUBLIC_FOLLOWUP_KIND) {
       if (task.hold) {
         throw new AxiError(
@@ -740,6 +744,23 @@ export class MarkdownStore implements Store {
           task.priority = priority;
           markChanged("priority");
         }
+      }
+      if (patch.priorityWhy !== undefined) {
+        const why = normalizePriorityWhy("--why", patch.priorityWhy);
+        if (task.priority_why !== why) {
+          task.priority_why = why;
+          markChanged("priority_why");
+        }
+      }
+      // Raising above P1 retires the reason unless a replacement was passed.
+      if (
+        patch.priority !== undefined &&
+        patch.priority >= 2 &&
+        patch.priorityWhy === undefined &&
+        task.priority_why !== undefined
+      ) {
+        delete task.priority_why;
+        markChanged("priority_why");
       }
       if (patch.meta) {
         const meta = { ...task.meta, ...patch.meta };

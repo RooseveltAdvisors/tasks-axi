@@ -105,6 +105,11 @@ tasks-axi ready
 tasks-axi blocked
 tasks-axi ready --include-held
 
+# priority discipline (beads): P0/P1 only move with a one-line reason
+tasks-axi add fm-hot-q1 "ship the fix" --priority 0 --why "launch train leaves without it"
+tasks-axi update fm-hot-q1 --priority 1 --why "re-scored after the incident review"
+tasks-axi priorities
+
 # Beads dispatch claims are atomic and exclusive
 tasks-axi claim fm-ready-q1 --backend beads --json
 
@@ -144,6 +149,31 @@ Pass `--json` to any mutation for a machine-readable result object (`{ "ok": tru
 `prune`, `render`, and `mv` are Markdown-only maintenance commands. For `mv`, a single task returns `id`, while a multi-task move returns first-occurrence-ordered, deduplicated `ids`, plus `from` and `to`.
 
 Run `tasks-axi --help` for the command list, or `tasks-axi <command> --help` for per-command usage.
+
+## Priority discipline
+
+Priority is a signal about scarcity, so the tool boundary keeps it honest on the Beads backend:
+
+- `add` without `--priority` creates **P2** - the neutral middle, never an implicit top slot.
+- Setting `--priority 0` or `1` - at `add` or later - requires `--why "<one line>"`. Without it the command refuses with `--priority <n> requires --why <one line> (P0/P1 must carry a reason)`.
+- The reason is persisted in the item body as a `priority-why: <text>` line (visible in `bd` itself and in the markdown body block) and echoed by `show` as the `priority_why` field. `update --body` replaces your notes but cannot silently strip the reason.
+- Raising a task above P1 retires its stored reason unless you pass a replacement `--why`.
+
+`tasks-axi priorities` prints the count per priority level and the P0+P1 share in one command (`--json` for the machine form), so the number stays observable:
+
+```
+$ tasks-axi priorities --backend beads
+priorities:
+  P0: 1
+  P1: 0
+  P2: 1
+  P3: 0
+  P4: 0
+  unset: 0
+p0p1: 1 of 2 (50%)
+```
+
+The Markdown backend has no gate and no default (behavior unchanged): it accepts and stores `--why` as the same `priority-why:` body line, which round-trips with the item.
 
 ## Durable public follow-ups
 
@@ -222,7 +252,7 @@ It gently formalizes the inline tags a backlog already uses as the canonical fie
 - `blocked-by: <id>` or `blocked-by: <id> - <reason>` - a dependency edge, optionally with preserved free-text rationale (also `parent:` / `discovered-from:`)
 - `(since <date>)` - when a task started; `(merged <date>)` / `(reported <date>)` when it closed
 - `(kind: X)` - task kind, when not already implied by a leading `SHIP` / `SCOUT` / `DOCS-ONLY` / `PERSISTENT SECONDMATE` word
-- `(priority: 0-4)` - optional priority, also accepted through `add` / `update --priority`
+- `(priority: 0-4)` - optional priority, also accepted through `add` / `update --priority`; a `priority-why: <text>` body line (written by `--why`) carries the required P0/P1 reason and round-trips with the item
 - `(hold: <reason>)`, `(hold-kind: captain|external|load|parked|future)`, `(hold-until: YYYY-MM-DD)` - structured dispatch holds written by `hold`
 - PR urls, `data/<id>/report.md` paths, and other `http(s)` urls - typed links
 

@@ -7,7 +7,8 @@
 - (status) Mobile ladder: 0.0.4 confirmed good on-device 2026-06-21. More rough edges to flag later.
 
 ## Queued
-- [ ] lease-adopt - adopt the durable lease in the spin-up path blocked-by: lease-core-t4 (repo: acme)
+- [ ] lease-adopt - adopt the durable lease in the spin-up path blocked-by: lease-core-t4 (repo: acme) (priority: 0)
+  priority-why: the lease handoff gates the whole launch train
 - [ ] release-validation - staged promote of builder v1.30.1 (target; cut as prerelease via #308 merge 2026-06-21 - carries fork-fix). REMAINING: validate then flip to latest. (local + repo: builder)
 - [ ] cert-cleanup - port the post-upload cert pruning to the release workflow. Keep newest 2, never touch distribution certs. (repo: monorepo)
 - [ ] go-live (CAPTAIN-GATED) - full launch checklist is the SINGLE SOURCE OF TRUTH at data/go-live.md. Discrete tasks spawn from there.

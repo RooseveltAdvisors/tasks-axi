@@ -81,6 +81,7 @@ describe.skipIf(!hasBd)("BeadsStore live bd round-trip", () => {
         kind: "ship",
         repo: "tasks-axi",
         priority: 1,
+        priorityWhy: "live gate fixture",
         meta: { fixture: "live" },
       });
       await first.create({ id: "fx-ready", title: "ready" });

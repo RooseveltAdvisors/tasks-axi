@@ -1,4 +1,4 @@
-import type { Task } from "./model.js";
+import type { PriorityCounts, Task } from "./model.js";
 import {
   PUBLIC_FOLLOWUP_KIND,
   type PublicFollowupDeliveryState,
@@ -110,6 +110,27 @@ export function publicFollowupsByDeliveryState(
   );
 }
 
+/** Priority histogram over a task set; the fallback behind `priorities()`. */
+export function countPriorities(
+  tasks: Array<{ priority?: unknown }>,
+): PriorityCounts {
+  const counts = [0, 0, 0, 0, 0];
+  let unset = 0;
+  for (const task of tasks) {
+    if (
+      typeof task.priority === "number" &&
+      Number.isInteger(task.priority) &&
+      task.priority >= 0 &&
+      task.priority <= 4
+    ) {
+      counts[task.priority]++;
+    } else {
+      unset++;
+    }
+  }
+  return { counts, unset };
+}
+
 /** The unresolved blocked-by edges for a task (blockers that are not done). */
 export function activeBlockers(task: Task, tasks: Task[]): string[] {
   const nativeBlockers = activeNativeBlockers(task);
@@ -128,8 +149,7 @@ function activeNativeBlockers(task: Task): string[] | undefined {
   if (task.native_blockers === undefined) return undefined;
   return task.native_blockers
     .filter(
-      (blocker) =>
-        blocker.status !== "closed" && blocker.status !== "pinned",
+      (blocker) => blocker.status !== "closed" && blocker.status !== "pinned",
     )
     .map((blocker) => blocker.id);
 }

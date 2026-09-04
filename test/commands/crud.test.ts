@@ -391,6 +391,49 @@ describe("crud commands", () => {
       }
     });
 
+    it("leaves priority unset when add passes none (no P2 default on markdown)", async () => {
+      const b = makeBacklog();
+      try {
+        await addCommand(["unranked-q1", "plain task"], b.ctx);
+        const out = await showCommand(["unranked-q1"], b.ctx);
+        expect(out).toContain('priority: "-"');
+        expect(b.read()).not.toContain("unranked-q1 - plain task (priority");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("stores --why as a priority-why body line without a gate on markdown", async () => {
+      const b = makeBacklog();
+      try {
+        const out = await addCommand(
+          [
+            "hot-q1",
+            "hot task",
+            "--priority",
+            "0",
+            "--why",
+            "launch train leaves without it",
+          ],
+          b.ctx,
+        );
+        expect(out).toContain("ok: added hot-q1 -> Queued");
+        // The markdown backend has no priority gate: P0 without --why works too.
+        await addCommand(["hot-q2", "hotter task", "--priority", "1"], b.ctx);
+        expect(b.read()).toContain(
+          "  priority-why: launch train leaves without it",
+        );
+        const shown = await showCommand(["hot-q1"], b.ctx);
+        expect(shown).toContain("priority_why: launch train leaves without it");
+        // The parsed body stays clean; the row echoes the structured field.
+        const seen = await showCommand(["hot-q1", "--full"], b.ctx);
+        expect(seen).toContain("priority: 0");
+        expect(seen).not.toContain("priority-why:");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("exposes usage help text", () => {
       expect(ADD_HELP).toContain("usage: tasks-axi add");
     });
@@ -879,6 +922,70 @@ describe("crud commands", () => {
         const out = await showCommand(["cert-cleanup"], b.ctx);
         expect(out).toContain("priority: 3");
         expect(b.read()).toContain("(priority: 3)");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("replaces and retires the priority reason", async () => {
+      const b = makeBacklog();
+      try {
+        await addCommand(
+          [
+            "reasoned-q1",
+            "reasoned task",
+            "--priority",
+            "0",
+            "--why",
+            "first reason",
+          ],
+          b.ctx,
+        );
+        await updateCommand(
+          ["reasoned-q1", "--priority", "1", "--why", "second reason"],
+          b.ctx,
+        );
+        let out = await showCommand(["reasoned-q1"], b.ctx);
+        expect(out).toContain("priority: 1");
+        expect(out).toContain("priority_why: second reason");
+        expect(b.read()).toContain("  priority-why: second reason");
+        expect(b.read()).not.toContain("first reason");
+
+        // Raising above P1 retires the stored reason.
+        await updateCommand(["reasoned-q1", "--priority", "3"], b.ctx);
+        out = await showCommand(["reasoned-q1"], b.ctx);
+        expect(out).toContain("priority: 3");
+        expect(out).toContain('priority_why: "-"');
+        expect(b.read()).not.toContain("second reason");
+        expect(b.read().split("reasoned-q1 - reasoned task").length).toBe(2);
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("keeps the priority reason across a wholesale body replacement", async () => {
+      const b = makeBacklog();
+      try {
+        await addCommand(
+          [
+            "guarded-q1",
+            "guarded task",
+            "--priority",
+            "0",
+            "--why",
+            "survives body rewrites",
+            "--body",
+            "old notes",
+          ],
+          b.ctx,
+        );
+        await updateCommand(["guarded-q1", "--body", "curated new notes"], b.ctx);
+        const out = await showCommand(["guarded-q1", "--full"], b.ctx);
+        expect(out).toContain("body: curated new notes");
+        expect(out).toContain("priority_why: survives body rewrites");
+        expect(b.read()).toContain("  priority-why: survives body rewrites");
+        expect(b.read()).toContain("  curated new notes");
+        expect(b.read()).not.toContain("old notes");
       } finally {
         b.cleanup();
       }

@@ -62,6 +62,13 @@ export interface NativeBlocker {
   status: string;
 }
 
+/** Priority histogram for the `priorities` read (counts[p] = tasks at P<p>). */
+export interface PriorityCounts {
+  counts: number[];
+  /** Tasks with no priority set. */
+  unset: number;
+}
+
 export interface Task {
   /** Join key: "homemux-h7". Caller-supplied or minted slug-xx. */
   id: string;
@@ -85,6 +92,8 @@ export interface Task {
   hold?: Hold;
   /** 0-4, optional (borrowed from beads; firstmate orders by list position). */
   priority?: number;
+  /** The one-line reason required with priority 0/1 (the `priority-why:` body line). */
+  priority_why?: string;
   /** Maps to `(since ...)`. */
   created?: string;
   updated?: string;
@@ -108,6 +117,8 @@ export interface TaskInput {
   deps?: Dep[];
   hold?: Hold;
   priority?: number;
+  /** Reason accompanying priority 0/1; persisted as the `priority-why:` body line. */
+  priorityWhy?: string;
   created?: string | null;
   closed?: string;
   /** Accepted only with kind=public-followup through the dedicated command path. */
@@ -131,6 +142,8 @@ export interface TaskPatch {
   /** Set a structured hold, or clear it with null. */
   hold?: Hold | null;
   priority?: number;
+  /** Replace the stored `priority-why:` reason line. */
+  priorityWhy?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -141,6 +154,7 @@ export type TaskUpdateChange =
   | "repo"
   | "kind"
   | "priority"
+  | "priority_why"
   | "links"
   | "hold"
   | "meta";

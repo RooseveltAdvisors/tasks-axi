@@ -3,6 +3,10 @@ import type { Dep, Hold, HoldKind, State, Task, TaskLink } from "../model.js";
 import { HOLD_KINDS } from "../model.js";
 import { isPrUrl } from "../pr-url.js";
 import {
+  formatPriorityWhyLine,
+  splitPriorityWhyLines,
+} from "../priority-why.js";
+import {
   PUBLIC_FOLLOWUP_KIND,
   assertPublicFollowupTaskState,
   decodePublicFollowup,
@@ -363,6 +367,11 @@ export function renderTaskLines(task: Task): string[] {
       "VALIDATION_ERROR",
     );
   }
+  if (task.priority_why) {
+    // The reason travels as the first body line so it is human-visible in the
+    // stored artifact and re-parses into the same structured field.
+    lines.push(`  ${formatPriorityWhyLine(task.priority_why)}`);
+  }
   if (task.body && task.body.length > 0) {
     for (const bodyLine of task.body.split("\n")) {
       // Blank body paragraphs stay blank (not two spaces). Indented content
@@ -474,8 +483,10 @@ function buildTask(
     assertPublicFollowupTaskState(state, metadata.publicFollowup, id);
     task.public_followup = metadata.publicFollowup;
   }
-  const body = structuredBody(metadata.bodyLines);
+  const { lines: restLines, why } = splitPriorityWhyLines(metadata.bodyLines);
+  const body = structuredBody(restLines);
   if (body !== undefined) task.body = body;
+  if (why !== undefined) task.priority_why = why;
   if (tags.created) task.created = tags.created;
   if (tags.closed) task.closed = tags.closed;
   if (tags.priority !== undefined) task.priority = tags.priority;

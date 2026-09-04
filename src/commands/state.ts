@@ -904,6 +904,7 @@ function taskToInput(task: Task): TaskInput {
   if (task.body) input.body = task.body;
   if (task.hold) input.hold = { ...task.hold };
   if (task.priority !== undefined) input.priority = task.priority;
+  if (task.priority_why !== undefined) input.priorityWhy = task.priority_why;
   input.created = task.created ?? null;
   if (task.closed) input.closed = task.closed;
   if (task.public_followup) {

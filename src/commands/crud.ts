@@ -49,6 +49,7 @@ flags:
   --kind <ship|scout|docs|...>, --repo <name>, --body <text> or --body-file <path>
   --start (place in In flight) | --queue (place in Queued, default)
   --blocked-by <id> (repeatable, must exist), --pr <url>, --report <path>, --priority <0-4>
+  --why "<one line>"   required with --priority 0-1 on the beads backend
   --mint [--prefix <p>]   mint a slug-xx id from the title instead of passing one
   --json   print the resulting task as a JSON object
 examples:
@@ -79,6 +80,7 @@ flags:
   --title <text>, --body <text> or --body-file <path>
   --archive-body   with --body/--body-file, archive the previous body
   --repo <name>, --kind <name>, --priority <0-4>, --pr <url>, --report <path>
+  --why "<one line>"   required with --priority 0-1 on the beads backend
   --json   print the resulting task as a JSON object
 examples:
   tasks-axi show nm-release-validation --full
@@ -237,6 +239,10 @@ export async function addCommand(
   const pr = takeFlag(args, "--pr");
   const report = takeFlag(args, "--report");
   const priority = parsePriority(takeFlag(args, "--priority"));
+  const why = requireNonEmptySingleLineFlagValue(
+    "--why",
+    takeFlag(args, "--why"),
+  );
   const deps = parseDeps(args);
   const json = takeBoolFlag(args, "--json");
   const start = takeBoolFlag(args, "--start");
@@ -335,6 +341,7 @@ export async function addCommand(
   if (repo) input.repo = repo;
   if (body !== undefined) input.body = body;
   if (priority !== undefined) input.priority = priority;
+  if (why !== undefined) input.priorityWhy = why;
 
   const task = await store.create(input);
   const all = (await store.list({})).items;
@@ -510,6 +517,10 @@ export async function updateCommand(
     takeFlag(args, "--kind"),
   );
   const priority = parsePriority(takeFlag(args, "--priority"));
+  const why = requireNonEmptySingleLineFlagValue(
+    "--why",
+    takeFlag(args, "--why"),
+  );
   const pr = takeFlag(args, "--pr");
   const report = takeFlag(args, "--report");
   const positionals = requirePositionals(
@@ -548,6 +559,7 @@ export async function updateCommand(
     patch.kind = kind;
   }
   if (priority !== undefined) patch.priority = priority;
+  if (why !== undefined) patch.priorityWhy = why;
   const addLinks = parseLinks(pr, report);
   if (addLinks.length > 0) patch.addLinks = addLinks;
 
@@ -595,6 +607,7 @@ function orderUpdateChanges(changed: TaskUpdateChange[]): TaskUpdateChange[] {
     "repo",
     "kind",
     "priority",
+    "priority_why",
     "links",
     "hold",
     "meta",

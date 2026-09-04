@@ -15,11 +15,17 @@ import { execFile as execFileCallback } from "node:child_process";
 import { basename, dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { deriveLinks } from "./markdown-grammar.js";
-import { isHoldActive } from "../derive.js";
+import { isHoldActive, countPriorities } from "../derive.js";
 import { AxiError, unsupported } from "../errors.js";
+import {
+  normalizePriorityWhy,
+  splitPriorityWhyLines,
+  withPriorityWhyLine,
+} from "../priority-why.js";
 import type {
   Dep,
   Hold,
+  PriorityCounts,
   State,
   Task,
   TaskInput,
@@ -44,6 +50,16 @@ const HELD_LABEL = "tasks-axi-held";
 const HYDRATION_CONCURRENCY = 8;
 /** Ids per `bd dep list` call; keeps a huge backlog off the argv length limit. */
 const DEP_BATCH_SIZE = 200;
+/** Priority assigned when `add` passes none: the neutral middle, never P0/P1. */
+const BEADS_DEFAULT_PRIORITY = 2;
+
+/** The priority-cap rule: P0/P1 only move with a one-line reason. */
+function priorityWhyRequired(priority: number): AxiError {
+  return new AxiError(
+    `--priority ${priority} requires --why <one line> (P0/P1 must carry a reason)`,
+    "VALIDATION_ERROR",
+  );
+}
 
 export type BeadsRunner = (
   binary: string,
@@ -225,8 +241,13 @@ function taskFromBead(
   if (kind) task.kind = kind;
   if (metadata.repo) task.repo = metadata.repo;
   const notes = text(bead.notes);
-  const body = decoded.managed ? decoded.body : (decoded.body ?? notes);
+  const rawBody = decoded.managed ? decoded.body : (decoded.body ?? notes);
+  const { lines: bodyLines, why: priorityWhy } = splitPriorityWhyLines(
+    rawBody ? rawBody.split("\n") : [],
+  );
+  const body = bodyLines.length > 0 ? bodyLines.join("\n") : undefined;
   if (body) task.body = body;
+  if (priorityWhy !== undefined) task.priority_why = priorityWhy;
   if (hold) task.hold = hold;
   if (typeof bead.priority === "number") task.priority = bead.priority;
   if (date(bead.created_at)) task.created = date(bead.created_at);
@@ -460,7 +481,7 @@ export class BeadsStore implements Store {
       return taskFromBead(
         bead,
         deps.get(id) ?? [],
-        nativeBlockers ? nativeBlockers.get(id) ?? [] : undefined,
+        nativeBlockers ? (nativeBlockers.get(id) ?? []) : undefined,
       );
     });
   }
@@ -480,11 +501,7 @@ export class BeadsStore implements Store {
       : undefined;
     return {
       bead,
-      task: taskFromBead(
-        bead,
-        deps.get(id) ?? [],
-        nativeBlockers?.get(id),
-      ),
+      task: taskFromBead(bead, deps.get(id) ?? [], nativeBlockers?.get(id)),
     };
   }
 
@@ -583,6 +600,23 @@ export class BeadsStore implements Store {
     return queryTasks(items, query);
   }
 
+  async priorities(): Promise<PriorityCounts> {
+    // One cheap `bd list` is enough for a histogram; skip the deps/blocker
+    // hydration `list()` pays for, so the number the captain watches stays
+    // one fast command even on a large workspace.
+    const beads = jsonItems(
+      await this.call("list", [
+        "list",
+        "--all",
+        "--no-pager",
+        "-n",
+        "0",
+        "--json",
+      ]),
+    );
+    return countPriorities(beads);
+  }
+
   async deps(id: string): Promise<DependencyQueryResult> {
     const found = await this.bead(id, true);
     if (!found) throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
@@ -611,6 +645,15 @@ export class BeadsStore implements Store {
       }
     }
     const title = appendLinks(input.title, input.links);
+    const priorityWhy =
+      input.priorityWhy !== undefined
+        ? normalizePriorityWhy("--why", input.priorityWhy)
+        : undefined;
+    // No caller priority means the neutral P2, never an implicit top slot.
+    const priority = input.priority ?? BEADS_DEFAULT_PRIORITY;
+    if (priority <= 1 && priorityWhy === undefined) {
+      throw priorityWhyRequired(priority);
+    }
     const meta: BeadsMeta = {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.repo ? { repo: input.repo } : {}),
@@ -627,11 +670,17 @@ export class BeadsStore implements Store {
         : {}),
     };
     const args = ["create", title, "--id", input.id, "--type", "task"];
-    if (input.body || Object.keys(meta).length > 0) {
-      args.push("--description", encodeDescription(input.body, meta));
+    if (
+      input.body !== undefined ||
+      Object.keys(meta).length > 0 ||
+      priorityWhy !== undefined
+    ) {
+      args.push(
+        "--description",
+        encodeDescription(withPriorityWhyLine(input.body, priorityWhy), meta),
+      );
     }
-    if (input.priority !== undefined)
-      args.push("--priority", String(input.priority));
+    args.push("--priority", String(priority));
     if (input.hold) {
       args.push("--labels", HELD_LABEL);
       if (input.hold.until) args.push("--defer", input.hold.until);
@@ -668,8 +717,8 @@ export class BeadsStore implements Store {
       found.task.body !== (input.body || undefined) ||
       found.task.kind !== input.kind ||
       found.task.repo !== input.repo ||
-      (input.priority !== undefined &&
-        found.task.priority !== input.priority) ||
+      found.task.priority !== priority ||
+      found.task.priority_why !== priorityWhy ||
       JSON.stringify(found.task.links) !== JSON.stringify(expectedLinks) ||
       JSON.stringify(found.task.meta) !== JSON.stringify(input.meta) ||
       !sameHold(found.task.hold, input.hold)
@@ -701,6 +750,13 @@ export class BeadsStore implements Store {
     const current = found?.task;
     if (!current || !found)
       throw new AxiError(`Task "${id}" not found`, "NOT_FOUND");
+    if (
+      patch.priority !== undefined &&
+      patch.priority <= 1 &&
+      patch.priorityWhy === undefined
+    ) {
+      throw priorityWhyRequired(patch.priority);
+    }
     const next: Task = {
       ...current,
       links: current.links.map((link) => ({ ...link })),
@@ -737,6 +793,23 @@ export class BeadsStore implements Store {
     if (patch.priority !== undefined && patch.priority !== current.priority) {
       next.priority = patch.priority;
       mark("priority");
+    }
+    if (patch.priorityWhy !== undefined) {
+      const why = normalizePriorityWhy("--why", patch.priorityWhy);
+      if (why !== current.priority_why) {
+        next.priority_why = why;
+        mark("priority_why");
+      }
+    }
+    // Raising above P1 retires the reason unless a replacement was passed.
+    if (
+      patch.priority !== undefined &&
+      patch.priority >= 2 &&
+      patch.priorityWhy === undefined &&
+      current.priority_why !== undefined
+    ) {
+      delete next.priority_why;
+      mark("priority_why");
     }
     if (patch.hold !== undefined) {
       const requestedHold = patch.hold ?? undefined;
@@ -782,10 +855,18 @@ export class BeadsStore implements Store {
       args.push("--title", next.title);
     if (
       changed.some((field) =>
-        ["body", "repo", "kind", "hold", "meta"].includes(field),
+        ["body", "repo", "kind", "hold", "meta", "priority_why"].includes(
+          field,
+        ),
       )
     ) {
-      args.push("--description", encodeDescription(next.body, metadata));
+      args.push(
+        "--description",
+        encodeDescription(
+          withPriorityWhyLine(next.body, next.priority_why),
+          metadata,
+        ),
+      );
     }
     if (changed.includes("priority"))
       args.push("--priority", String(next.priority));
