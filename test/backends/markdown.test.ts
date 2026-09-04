@@ -1181,6 +1181,32 @@ describe("MarkdownStore", () => {
       }
     });
 
+    it("keeps the priority-why reason on a moved P0 task", async () => {
+      const source = makeBacklog("# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n");
+      const target = makeBacklog("# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n");
+      try {
+        await source.store.create({
+          id: "hot-q1",
+          title: "hot",
+          priority: 0,
+          priorityWhy: "launch train",
+        });
+        expect(source.read()).toContain("  priority-why: launch train");
+
+        await source.store.moveManyTo(["hot-q1"], target.store);
+
+        expect(target.read()).toContain("  priority-why: launch train");
+        const got = await target.store.get("hot-q1");
+        expect(got?.priority_why).toBe("launch train");
+        expect(got?.priority).toBe(0);
+        const src = source.read();
+        expect(src).not.toContain("hot-q1");
+      } finally {
+        source.cleanup();
+        target.cleanup();
+      }
+    });
+
     it("refuses when a moved item's blocker stays behind", async () => {
       const source = makeBacklog(linkedSet);
       const target = makeBacklog("# Backlog\n\n## Queued\n\n## Done\n");
