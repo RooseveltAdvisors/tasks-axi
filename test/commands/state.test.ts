@@ -109,6 +109,44 @@ describe("state commands", () => {
   });
 
   describe("done", () => {
+    it("refuses a --note carrying the reserved priority-why managed line", async () => {
+      const b = makeBacklog();
+      try {
+        const before = b.read();
+        await expect(
+          doneCommand(
+            ["cert-cleanup", "--note", "priority-why: not a real reason", "--no-prune"],
+            b.ctx,
+          ),
+        ).rejects.toMatchObject({
+          code: "VALIDATION_ERROR",
+          message: expect.stringContaining(
+            'reserved "priority-why:" managed line',
+          ),
+        });
+        expect(b.read()).toBe(before);
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("refuses the same note on the already-done metadata path", async () => {
+      const b = makeBacklog();
+      try {
+        await doneCommand(["cert-cleanup", "--no-prune"], b.ctx);
+        const closed = b.read();
+        await expect(
+          doneCommand(
+            ["cert-cleanup", "--note", "priority-why:", "--no-prune"],
+            b.ctx,
+          ),
+        ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        expect(b.read()).toBe(closed);
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("closes, records the pr, and reports pruned count", async () => {
       const b = makeBacklog();
       try {

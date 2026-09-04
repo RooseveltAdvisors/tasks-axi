@@ -22,6 +22,7 @@ import {
 } from "../derive.js";
 import { AxiError, notFound, unsupported } from "../errors.js";
 import { formatCountLine } from "../format.js";
+import { assertNoManagedPriorityWhyLine } from "../priority-why.js";
 import { validateDependencyId } from "../id.js";
 import type {
   Dep,
@@ -194,6 +195,7 @@ export async function doneCommand(
     takeFlag(args, "--report"),
   );
   const note = requireNonEmptyFlagValue("--note", takeFlag(args, "--note"));
+  if (note !== undefined) assertNoManagedPriorityWhyLine(note);
   const keepRaw = takeFlag(args, "--keep");
   const noPrune = takeBoolFlag(args, "--no-prune");
   const positionals = requirePositionals(args, 1, 1, DONE_HELP.split("\n")[0]);

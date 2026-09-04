@@ -159,7 +159,7 @@ Priority is a signal about scarcity, so the tool boundary keeps it honest on the
 - `--why` is only accepted **with** `--priority 0` or `1` (on either backend). A reason on a P2+ item refuses with `--why requires --priority 0 or 1 (only P0/P1 carry a reason)`, so a stale justification never outlives the claim it was written for.
 - The reason is persisted in the item body as a `priority-why: <text>` line (visible in `bd` itself and in the markdown body block) and echoed by `show` as the `priority_why` field. `update --body` replaces your notes but cannot silently strip the reason.
 - The `priority-why:` line is reserved: a `--body` / `--body-file` whose text contains it is refused with a validation error naming the rule (like the hold-reason parentheses rule), so a caller can never spoof or silently lose body text through it.
-- Raising a task above P1 retires its stored reason unless you pass a replacement `--why`.
+- Raising a task above P1 retires its stored reason; a replacement `--why` is only accepted together with `--priority 0` or `1`.
 
 `tasks-axi priorities` prints the count per priority level and the P0+P1 share in one command (`--json` for the machine form), so the number stays observable. The headline histogram and share cover the **open** backlog (queued + in flight) - closing work must not relieve the cap - and the all-time tally, done tasks included, follows on its own line:
 
