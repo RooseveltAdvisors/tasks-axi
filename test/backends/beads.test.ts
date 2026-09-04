@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BeadsStore, type BeadsRunner } from "../../src/backends/beads.js";
-import { showCommand } from "../../src/commands/crud.js";
+import { addCommand, showCommand } from "../../src/commands/crud.js";
 import { resolveConfig } from "../../src/config.js";
 import { blockedIds } from "../../src/derive.js";
 
@@ -210,6 +210,26 @@ describe("BeadsStore", () => {
       "blocked",
       "show fm-blocker",
     ]);
+  });
+
+  it("rejects a beads add whose --body carries the reserved priority-why line", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    // Before the guard this reached beads create, which strips the managed
+    // line from the description and then fails its own persistence check with
+    // an internal-sounding error; the command now refuses it up front.
+    await expect(
+      addCommand(
+        ["bd-spoof-q1", "t", "--body", "priority-why: not a real reason"],
+        { store, config: resolveConfig({}) },
+      ),
+    ).rejects.toThrow(
+      'Task body must not contain the reserved "priority-why:" managed line',
+    );
+    expect(fake.beads.has("bd-spoof-q1")).toBe(false);
   });
 
   it("resolves blocker statuses only for the requested beads", async () => {

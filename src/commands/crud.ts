@@ -11,6 +11,7 @@ import {
 import { takeBody } from "../body.js";
 import { deriveLinks, extractTags } from "../backends/markdown-grammar.js";
 import { PR_URL_EXPECTED } from "../pr-url.js";
+import { assertNoManagedPriorityWhyLine } from "../priority-why.js";
 import { renderMutation, stateLabel, taskToJson } from "../confirm.js";
 import { requireCtx, type TasksContext } from "../context.js";
 import { blockedIds, heldTasks } from "../derive.js";
@@ -259,6 +260,7 @@ export async function addCommand(
   const kind = requireSafeTagFlagValue("--kind", takeFlag(args, "--kind"));
   const repo = requireSafeTagFlagValue("--repo", takeFlag(args, "--repo"));
   const body = requireNonEmptyFlagValue("--body", takeBody(args));
+  if (body !== undefined) assertNoManagedPriorityWhyLine(body);
   const pr = takeFlag(args, "--pr");
   const report = takeFlag(args, "--report");
   const { priority, why } = parsePriorityPair(args);
@@ -526,6 +528,7 @@ export async function updateCommand(
   const json = takeBoolFlag(args, "--json");
   const title = takeFlag(args, "--title");
   const body = takeBody(args);
+  if (body !== undefined) assertNoManagedPriorityWhyLine(body);
   const archiveBody = takeBoolFlag(args, "--archive-body");
   const repo = requireNonEmptySingleLineFlagValue(
     "--repo",

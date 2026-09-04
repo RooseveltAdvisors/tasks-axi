@@ -36,6 +36,32 @@ export function formatPriorityWhyLine(why: string): string {
   return `${PRIORITY_WHY_PREFIX} ${why}`;
 }
 
+/** Does this (unindented) body line carry the managed `priority-why:` form? */
+export function isPriorityWhyLine(line: string): boolean {
+  return PRIORITY_WHY_LINE_RE.test(line);
+}
+
+/**
+ * The reserved-line rule: caller-supplied task bodies must not carry the
+ * managed `priority-why:` form. On markdown the parse would silently lift the
+ * line into the reason field (losing the body text and fabricating a reason
+ * on an unprioritized item); on beads the create-time persistence check would
+ * fail with an internal-sounding error. Refuse it up front instead - the
+ * same fail-loud contract as the hold-reason parentheses rule.
+ */
+export function assertNoManagedPriorityWhyLine(body: string): void {
+  for (const line of body.split("\n")) {
+    if (!isPriorityWhyLine(line)) continue;
+    throw new AxiError(
+      'Task body must not contain the reserved "priority-why:" managed line',
+      "VALIDATION_ERROR",
+      [
+        "State the priority reason via --why with --priority 0 or 1, or reword that body line",
+      ],
+    );
+  }
+}
+
 /**
  * Split unindented body lines into the reason and the remaining lines.
  * The last matching line wins (hand edits can accumulate); every match is

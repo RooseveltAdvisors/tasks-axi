@@ -1,4 +1,6 @@
 import { decode } from "@toon-format/toon";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ADD_HELP,
@@ -251,6 +253,45 @@ describe("crud commands", () => {
           addCommand(["multi-q1", "first\nsecond"], b.ctx),
         ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
         expect(b.read()).not.toContain("multi-q1");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("rejects a --body carrying the reserved priority-why managed line", async () => {
+      const b = makeBacklog();
+      try {
+        // The markdown silent-lift trace: without the guard the next parse
+        // would eat the body and fabricate a reason on an unprioritized item.
+        await expect(
+          addCommand(
+            ["spoof-q1", "t", "--body", "priority-why: not a real reason"],
+            b.ctx,
+          ),
+        ).rejects.toThrow(
+          'Task body must not contain the reserved "priority-why:" managed line',
+        );
+        // The bare empty-value form is equally reserved (it would vanish on
+        // the next dirty render).
+        await expect(
+          addCommand(["spoof-q2", "t", "--body", "priority-why:"], b.ctx),
+        ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        // Mid-body occurrences are caught too, and nothing is persisted.
+        await expect(
+          addCommand(
+            ["spoof-q3", "t", "--body", "intro\npriority-why: fake\noutro"],
+            b.ctx,
+          ),
+        ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        expect(b.read()).not.toContain("spoof-q");
+        // Indented occurrences are inert body text (never the managed form).
+        await addCommand(
+          ["indented-q1", "t", "--body", "  priority-why: indented note"],
+          b.ctx,
+        );
+        const shown = await showCommand(["indented-q1", "--full"], b.ctx);
+        expect(shown).toContain("priority-why: indented note");
+        expect(shown).toContain('priority_why: "-"');
       } finally {
         b.cleanup();
       }
@@ -1038,6 +1079,29 @@ describe("crud commands", () => {
         expect(b.read()).toContain("  priority-why: survives body rewrites");
         expect(b.read()).toContain("  curated new notes");
         expect(b.read()).not.toContain("old notes");
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("rejects update bodies carrying the reserved priority-why line, including --body-file", async () => {
+      const b = makeBacklog();
+      const spoof = join(b.dir, "spoof-body.md");
+      try {
+        await addCommand(["clean-q1", "clean task"], b.ctx);
+        await expect(
+          updateCommand(["clean-q1", "--body", "priority-why: fake"], b.ctx),
+        ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        writeFileSync(spoof, "notes\npriority-why: from a file\n", "utf8");
+        await expect(
+          updateCommand(["clean-q1", "--body-file", spoof], b.ctx),
+        ).rejects.toThrow(
+          'Task body must not contain the reserved "priority-why:" managed line',
+        );
+        // The refused update changed nothing.
+        const out = await showCommand(["clean-q1", "--full"], b.ctx);
+        expect(out).toContain('priority_why: "-"');
+        expect(out).not.toContain("fake");
       } finally {
         b.cleanup();
       }
