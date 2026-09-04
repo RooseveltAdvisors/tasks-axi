@@ -11,9 +11,8 @@
  * no native bd field, so they are keyed by edge in the same reserved header.
  */
 
-import { execFile as execFileCallback } from "node:child_process";
+import { spawn } from "node:child_process";
 import { basename, dirname, resolve } from "node:path";
-import { promisify } from "node:util";
 import { deriveLinks } from "./markdown-grammar.js";
 import { isHoldActive, countPriorities } from "../derive.js";
 import { AxiError, unsupported } from "../errors.js";
@@ -43,7 +42,6 @@ import type {
   Store,
 } from "../store.js";
 
-const execFile = promisify(execFileCallback);
 const META_PREFIX = "<!-- tasks-axi:beads/v1:";
 const META_SUFFIX = " -->";
 const HELD_LABEL = "tasks-axi-held";
@@ -52,6 +50,43 @@ const HYDRATION_CONCURRENCY = 8;
 const DEP_BATCH_SIZE = 200;
 /** Priority assigned when `add` passes none: the neutral middle, never P0/P1. */
 const BEADS_DEFAULT_PRIORITY = 2;
+
+/**
+ * Spawns bd and streams both pipes into memory with no size cap. execFile's
+ * default 1 MiB maxBuffer silently killed children once `bd list --all
+ * --json` crossed 1,048,576 bytes (fleet incident 2026-09-04). A non-zero
+ * exit rejects with the exit status, stdout, and stderr attached, so `call`
+ * can surface why bd failed instead of a bare "beads list failed".
+ */
+function spawnBd(
+  binary: string,
+  args: string[],
+  cwd: string,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args, { cwd });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout?.on("data", (chunk) => stdout.push(chunk as Buffer));
+    child.stderr?.on("data", (chunk) => stderr.push(chunk as Buffer));
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      const out = Buffer.concat(stdout).toString("utf8");
+      const err = Buffer.concat(stderr).toString("utf8");
+      if (code === 0) {
+        resolve({ stdout: out, stderr: err });
+        return;
+      }
+      reject(
+        Object.assign(new Error(`bd exited ${signal ?? `with code ${code}`}`), {
+          code: code ?? signal,
+          stdout: out,
+          stderr: err,
+        }),
+      );
+    });
+  });
+}
 
 /** The priority-cap rule: P0/P1 only move with a one-line reason. */
 function priorityWhyRequired(priority: number): AxiError {
@@ -304,9 +339,7 @@ export class BeadsStore implements Store {
     this.cwd =
       basename(beadsPath) === ".beads" ? dirname(beadsPath) : beadsPath;
     this.prefix = options.prefix ?? "bd";
-    this.run =
-      options.run ??
-      (async (binary, args, cwd) => execFile(binary, args, { cwd }));
+    this.run = options.run ?? spawnBd;
   }
 
   capabilities(): Capabilities {
@@ -347,12 +380,20 @@ export class BeadsStore implements Store {
       ) {
         return null;
       }
-      const stderr =
+      const failure =
         error && typeof error === "object"
-          ? String((error as { stderr?: string }).stderr ?? "").trim()
-          : "";
+          ? (error as { stderr?: unknown; code?: unknown })
+          : {};
+      const stderr = String(failure.stderr ?? "").trim();
+      const status =
+        typeof failure.code === "number"
+          ? `exit ${failure.code}`
+          : typeof failure.code === "string" && failure.code !== ""
+            ? failure.code
+            : "";
+      const detail = [status, stderr].filter(Boolean).join(": ");
       throw new AxiError(
-        `beads ${verb} failed${stderr ? `: ${stderr}` : ""}`,
+        `beads ${verb} failed${detail ? `: ${detail}` : ""}`,
         "UNKNOWN",
         [`Check the beads CLI and workspace, then retry`],
       );
