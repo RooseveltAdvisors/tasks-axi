@@ -1127,10 +1127,15 @@ describe("BeadsStore", () => {
       priorityWhy: "warm path",
     });
     await store.create({ id: "bd-d", title: "d", priority: 4 });
+    await store.transition("bd-b", "done");
 
     calls.length = 0;
     const counts = await store.priorities!();
-    expect(counts).toEqual({ counts: [1, 1, 1, 0, 1], unset: 0 });
+    // The closed P0 leaves the open headline but stays in the all-time tally.
+    expect(counts).toEqual({
+      open: { counts: [0, 1, 1, 0, 1], unset: 0 },
+      all: { counts: [1, 1, 1, 0, 1], unset: 0 },
+    });
     // A histogram must not pay the deps/blocker hydration of a full list.
     expect(calls).toEqual(["list"]);
   });

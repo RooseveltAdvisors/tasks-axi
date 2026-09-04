@@ -156,14 +156,15 @@ Priority is a signal about scarcity, so the tool boundary keeps it honest on the
 
 - `add` without `--priority` creates **P2** - the neutral middle, never an implicit top slot.
 - Setting `--priority 0` or `1` - at `add` or later - requires `--why "<one line>"`. Without it the command refuses with `--priority <n> requires --why <one line> (P0/P1 must carry a reason)`.
+- `--why` is only accepted **with** `--priority 0` or `1` (on either backend). A reason on a P2+ item refuses with `--why requires --priority 0 or 1 (only P0/P1 carry a reason)`, so a stale justification never outlives the claim it was written for.
 - The reason is persisted in the item body as a `priority-why: <text>` line (visible in `bd` itself and in the markdown body block) and echoed by `show` as the `priority_why` field. `update --body` replaces your notes but cannot silently strip the reason.
 - Raising a task above P1 retires its stored reason unless you pass a replacement `--why`.
 
-`tasks-axi priorities` prints the count per priority level and the P0+P1 share in one command (`--json` for the machine form), so the number stays observable:
+`tasks-axi priorities` prints the count per priority level and the P0+P1 share in one command (`--json` for the machine form), so the number stays observable. The headline histogram and share cover the **open** backlog (queued + in flight) - closing work must not relieve the cap - and the all-time tally, done tasks included, follows on its own line:
 
 ```
 $ tasks-axi priorities --backend beads
-priorities:
+open_priorities:
   P0: 1
   P1: 0
   P2: 1
@@ -171,9 +172,10 @@ priorities:
   P4: 0
   unset: 0
 p0p1: 1 of 2 (50%)
+all_time_p0p1: 2 of 4 (50%)
 ```
 
-The Markdown backend has no gate and no default (behavior unchanged): it accepts and stores `--why` as the same `priority-why:` body line, which round-trips with the item.
+The Markdown backend has no P0/P1 gate and no default priority (behavior unchanged): it accepts and stores `--why` as the same `priority-why:` body line, which round-trips with the item.
 
 ## Durable public follow-ups
 

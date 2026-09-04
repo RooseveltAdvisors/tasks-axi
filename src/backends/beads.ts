@@ -25,7 +25,7 @@ import {
 import type {
   Dep,
   Hold,
-  PriorityCounts,
+  PriorityHistogram,
   State,
   Task,
   TaskInput,
@@ -600,10 +600,11 @@ export class BeadsStore implements Store {
     return queryTasks(items, query);
   }
 
-  async priorities(): Promise<PriorityCounts> {
-    // One cheap `bd list` is enough for a histogram; skip the deps/blocker
+  async priorities(): Promise<PriorityHistogram> {
+    // One cheap `bd list` is enough for both histograms; skip the deps/blocker
     // hydration `list()` pays for, so the number the captain watches stays
-    // one fast command even on a large workspace.
+    // one fast command even on a large workspace. `--all` carries the closed
+    // beads, which is what makes the all-time tally free here.
     const beads = jsonItems(
       await this.call("list", [
         "list",
@@ -614,7 +615,12 @@ export class BeadsStore implements Store {
         "--json",
       ]),
     );
-    return countPriorities(beads);
+    return countPriorities(
+      beads.map((bead) => ({
+        priority: bead.priority,
+        state: stateOf(bead.status),
+      })),
+    );
   }
 
   async deps(id: string): Promise<DependencyQueryResult> {

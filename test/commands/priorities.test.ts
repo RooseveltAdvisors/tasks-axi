@@ -25,24 +25,52 @@ const GRAPH = [
 ].join("\n");
 
 describe("priorities command", () => {
-  it("prints the count per level and the P0+P1 share from a fixture graph", async () => {
+  it("counts the open backlog in the headline histogram and share", async () => {
     const b = makeBacklog(GRAPH);
     try {
       const out = await prioritiesCommand([], b.ctx);
-      expect(out).toContain("priorities:");
-      expect(out).toContain("P0: 2");
+      expect(out).toContain("open_priorities:");
+      // The Done P0 is excluded: spent work must not relieve the cap.
+      expect(out).toContain("P0: 1");
       expect(out).toContain("P1: 1");
       expect(out).toContain("P2: 1");
       expect(out).toContain("P3: 0");
       expect(out).toContain("P4: 1");
       expect(out).toContain("unset: 1");
-      expect(out).toContain("p0p1: 3 of 6 (50%)");
+      expect(out).toContain("p0p1: 2 of 5 (40%)");
     } finally {
       b.cleanup();
     }
   });
 
-  it("answers --json with a machine-readable histogram", async () => {
+  it("reports the all-time share on its own line beneath the open one", async () => {
+    const b = makeBacklog(GRAPH);
+    try {
+      const out = await prioritiesCommand([], b.ctx);
+      expect(out).toContain("all_time_p0p1: 3 of 6 (50%)");
+      expect(out.indexOf("p0p1: 2 of 5")).toBeLessThan(
+        out.indexOf("all_time_p0p1:"),
+      );
+    } finally {
+      b.cleanup();
+    }
+  });
+
+  it("closing a task moves it out of the open share but not the all-time one", async () => {
+    const b = makeBacklog(GRAPH);
+    try {
+      const before = JSON.parse(await prioritiesCommand(["--json"], b.ctx));
+      await b.ctx.store.transition("hot-zero", "done");
+      const after = JSON.parse(await prioritiesCommand(["--json"], b.ctx));
+      expect(before.p0p1).toEqual({ count: 2, total: 5, percent: 40 });
+      expect(after.p0p1).toEqual({ count: 1, total: 4, percent: 25 });
+      expect(after.all_time.p0p1).toEqual(before.all_time.p0p1);
+    } finally {
+      b.cleanup();
+    }
+  });
+
+  it("answers --json with both the open and all-time histograms", async () => {
     const b = makeBacklog(GRAPH);
     try {
       const out = await prioritiesCommand(["--json"], b.ctx);
@@ -50,9 +78,15 @@ describe("priorities command", () => {
       expect(payload).toMatchObject({
         ok: true,
         action: "priorities",
-        total: 6,
-        counts: { "0": 2, "1": 1, "2": 1, "3": 0, "4": 1, unset: 1 },
-        p0p1: { count: 3, total: 6, percent: 50 },
+        scope: "open",
+        total: 5,
+        counts: { "0": 1, "1": 1, "2": 1, "3": 0, "4": 1, unset: 1 },
+        p0p1: { count: 2, total: 5, percent: 40 },
+        all_time: {
+          total: 6,
+          counts: { "0": 2, "1": 1, "2": 1, "3": 0, "4": 1, unset: 1 },
+          p0p1: { count: 3, total: 6, percent: 50 },
+        },
       });
     } finally {
       b.cleanup();
@@ -65,8 +99,10 @@ describe("priorities command", () => {
       const out = await prioritiesCommand([], b.ctx);
       expect(out).toContain("unset: 0");
       expect(out).toContain("p0p1: 0 of 0 (0%)");
+      expect(out).toContain("all_time_p0p1: 0 of 0 (0%)");
       const json = JSON.parse(await prioritiesCommand(["--json"], b.ctx));
       expect(json.p0p1).toEqual({ count: 0, total: 0, percent: 0 });
+      expect(json.all_time.p0p1).toEqual({ count: 0, total: 0, percent: 0 });
     } finally {
       b.cleanup();
     }

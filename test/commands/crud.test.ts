@@ -434,6 +434,29 @@ describe("crud commands", () => {
       }
     });
 
+    it.each([
+      ["no --priority", ["loose-q1", "loose task", "--why", "just because"]],
+      [
+        "--priority 2",
+        ["loose-q2", "loose task", "--priority", "2", "--why", "just because"],
+      ],
+      [
+        "--priority 4",
+        ["loose-q3", "loose task", "--priority", "4", "--why", "just because"],
+      ],
+    ])("rejects --why with %s before creating a task", async (_case, argv) => {
+      const b = makeBacklog();
+      try {
+        await expect(addCommand(argv, b.ctx)).rejects.toMatchObject({
+          code: "VALIDATION_ERROR",
+          message: "--why requires --priority 0 or 1 (only P0/P1 carry a reason)",
+        });
+        expect(b.read()).not.toContain("loose task");
+      } finally {
+        b.cleanup();
+      }
+    });
+
     it("exposes usage help text", () => {
       expect(ADD_HELP).toContain("usage: tasks-axi add");
     });
@@ -958,6 +981,35 @@ describe("crud commands", () => {
         expect(out).toContain('priority_why: "-"');
         expect(b.read()).not.toContain("second reason");
         expect(b.read().split("reasoned-q1 - reasoned task").length).toBe(2);
+      } finally {
+        b.cleanup();
+      }
+    });
+
+    it("rejects --why without a P0/P1 priority and leaves the task alone", async () => {
+      const b = makeBacklog();
+      try {
+        await addCommand(
+          ["settled-q1", "settled task", "--priority", "0", "--why", "kept"],
+          b.ctx,
+        );
+        await expect(
+          updateCommand(["settled-q1", "--why", "no priority passed"], b.ctx),
+        ).rejects.toMatchObject({
+          code: "VALIDATION_ERROR",
+          message: "--why requires --priority 0 or 1 (only P0/P1 carry a reason)",
+        });
+        await expect(
+          updateCommand(
+            ["settled-q1", "--priority", "3", "--why", "still not a P0"],
+            b.ctx,
+          ),
+        ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+        const out = await showCommand(["settled-q1"], b.ctx);
+        expect(out).toContain("priority: 0");
+        expect(out).toContain("priority_why: kept");
+        expect(b.read()).not.toContain("no priority passed");
+        expect(b.read()).not.toContain("still not a P0");
       } finally {
         b.cleanup();
       }

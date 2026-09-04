@@ -1,4 +1,4 @@
-import type { PriorityCounts, Task } from "./model.js";
+import type { PriorityCounts, PriorityHistogram, State, Task } from "./model.js";
 import {
   PUBLIC_FOLLOWUP_KIND,
   type PublicFollowupDeliveryState,
@@ -110,10 +110,7 @@ export function publicFollowupsByDeliveryState(
   );
 }
 
-/** Priority histogram over a task set; the fallback behind `priorities()`. */
-export function countPriorities(
-  tasks: Array<{ priority?: unknown }>,
-): PriorityCounts {
+function tallyPriorities(tasks: Array<{ priority?: unknown }>): PriorityCounts {
   const counts = [0, 0, 0, 0, 0];
   let unset = 0;
   for (const task of tasks) {
@@ -129,6 +126,20 @@ export function countPriorities(
     }
   }
   return { counts, unset };
+}
+
+/**
+ * Priority histograms over a task set; the fallback behind `priorities()`.
+ * The headline scope is `open` (non-done) because a closed P0 is spent work,
+ * not backlog pressure: counting it lets the cap drift as tasks complete.
+ */
+export function countPriorities(
+  tasks: Array<{ priority?: unknown; state?: State }>,
+): PriorityHistogram {
+  return {
+    open: tallyPriorities(tasks.filter((task) => task.state !== "done")),
+    all: tallyPriorities(tasks),
+  };
 }
 
 /** The unresolved blocked-by edges for a task (blockers that are not done). */

@@ -69,6 +69,14 @@ export interface PriorityCounts {
   unset: number;
 }
 
+/** The `priorities` read: the open (non-done) headline plus the all-time tally. */
+export interface PriorityHistogram {
+  /** Open and in-flight tasks - the scope the priority cap is about. */
+  open: PriorityCounts;
+  /** Every task the backend still holds, done included. */
+  all: PriorityCounts;
+}
+
 export interface Task {
   /** Join key: "homemux-h7". Caller-supplied or minted slug-xx. */
   id: string;
