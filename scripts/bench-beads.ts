@@ -128,9 +128,10 @@ function runCli(
   });
   const seconds = (performance.now() - started) / 1000;
   if (result.status !== 0) {
-    console.error(`CLI failed (${result.status}): tasks-axi ${args.join(" ")}`);
-    console.error(result.stderr || result.stdout);
-    process.exit(1);
+    throw new Error(
+      `CLI failed (${result.status}): tasks-axi ${args.join(" ")}\n` +
+        `${result.stderr || result.stdout}`,
+    );
   }
   return { seconds, stdout: result.stdout };
 }
@@ -245,38 +246,45 @@ async function main(): Promise<void> {
       ],
       { cwd: storeDir, stdio: "ignore", detached: true },
     );
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    const stopLoad = async (): Promise<void> => {
+      writeFileSync(stopFile, "");
+      const stopped = new Promise<void>((resolve) => {
+        load.on("exit", () => resolve());
+      });
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+      await Promise.race([stopped, timeout]);
+      try {
+        process.kill(-load.pid!, "SIGTERM");
+      } catch {
+        // already gone
+      }
+      rmSync(stopFile, { force: true });
+    };
     const workDir = mkdtempSync(join(tmpdir(), "tasks-axi-bench-run-"));
-    const callLog = join(workDir, "bd-calls.log");
-    const shim = writeBdShim(workDir, resolveBd(bdBinary), callLog);
     const configPath = join(storeDir, ".tasks.toml");
     const originalConfig = readFileSync(configPath, "utf8");
-    writeFileSync(
-      configPath,
-      originalConfig.replace(/^binary = ".*"$/m, `binary = "${shim}"`),
-    );
-    const result = timedScenario(
-      "list (contended)",
-      distCli,
-      ["list"],
-      storeDir,
-      { BD_NON_INTERACTIVE: "1", BEADS_ACTOR: SYNTHETIC_ACTOR },
-      callLog,
-    );
-    writeFileSync(configPath, originalConfig);
-    writeFileSync(stopFile, "");
-    const stopped = new Promise<void>((resolve) => {
-      load.on("exit", () => resolve());
-    });
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 10_000));
-    await Promise.race([stopped, timeout]);
+    let result: ScenarioResult;
     try {
-      process.kill(-load.pid!, "SIGTERM");
-    } catch {
-      // already gone
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const callLog = join(workDir, "bd-calls.log");
+      const shim = writeBdShim(workDir, resolveBd(bdBinary), callLog);
+      writeFileSync(
+        configPath,
+        originalConfig.replace(/^binary = ".*"$/m, `binary = "${shim}"`),
+      );
+      result = timedScenario(
+        "list (contended)",
+        distCli,
+        ["list"],
+        storeDir,
+        { BD_NON_INTERACTIVE: "1", BEADS_ACTOR: SYNTHETIC_ACTOR },
+        callLog,
+      );
+    } finally {
+      writeFileSync(configPath, originalConfig);
+      await stopLoad();
+      rmSync(workDir, { recursive: true, force: true });
     }
-    rmSync(stopFile, { force: true });
-    rmSync(workDir, { recursive: true, force: true });
     console.log("");
     console.log(
       `| ${"list (contended)".padEnd(30)} | ${result.seconds

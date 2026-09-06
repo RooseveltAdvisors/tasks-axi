@@ -61,10 +61,10 @@ yourself or `get` and `list` will disagree.
 the backlog read and the blocked projection must not fail the read: the
 survivor keeps its edges, the vanished task does not render, the next read
 self-heals.
-- `showCommand` never reads the whole backlog: a backend that reports native
-  blocker state (beads) answers from the single `bd show` (its payload carries
-  the dependency beads and their statuses); only the derived-graph fallback
-  (Markdown) needs `list`.
+- A single-task read (`showCommand`) is exactly two subprocesses: the `bd show`
+  (its payload carries the dependency beads and their statuses) plus the cached
+  whole-backlog `bd blocked` when the task has blocked-by deps; only the
+  derived-graph fallback (Markdown) needs `list`.
 - **The CLI view layer must not fan out either.** `withDependencyTargets`
   (`src/commands/state.ts`) resolves dep-target states through ONE
   `store.list({})` read, never a `get` per target - on beads each `get` is a
