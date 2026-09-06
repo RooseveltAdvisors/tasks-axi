@@ -20,48 +20,64 @@ The CLI layer never knows which backend is active — it only talks to the `Stor
 - `src/commands/*` — one file per verb group; `src/view.ts` owns the read-side TOON projection; `src/confirm.ts` owns the write-side output (the `ok:` confirmation line, the `--json` payload, and `renderMutation`, which assembles both).
 - Shared helpers copied from the family: `args.ts`, `body.ts`, `format.ts`, `fields.ts`, `toon.ts`, `suggestions.ts`, `skill.ts` (minimal CLI-deferring stub generator).
 
-## Beads reads must stay proportional to the ids requested
+## Beads reads must stay bounded, not proportional to backlog size
 
-Every `bd` invocation is a subprocess that also spawns `git`, so an N+1 read is a
-fleet-visible hang, not a micro-optimization. On firstmate's real backlog one
-`show` once cost 314 `bd` + 629 `git` executions and ~127s; it is 3 + 6 and
-under a second now. Three rules keep it there, each with a regression test in
-`test/backends/beads.test.ts` that asserts on the sequence of `bd` invocations
+Every `bd` invocation is a subprocess that also spawns `git` and takes the
+embedded-dolt store lock, so an N+1 read is a fleet-visible hang (the store
+serializes on `.beads/embeddeddolt/.lock` under fleet load), not a
+micro-optimization. On firstmate's real backlog one `list` once cost ~1m41s
+(300+ `bd show` blocker fan-out) and one `add` ~2m57s; on the 894-issue synthetic
+store the benchmark pins it (list 278s -> 0.83s, 305 -> 2 bd calls; see
+`scripts/bench-beads.ts`). The invariants, each with a regression test in
+`test/backends/beads.test.ts` asserting on the sequence of `bd` invocations
 (never on wall-clock — timing tests are flaky):
 
-- `nativeBlockersForBeads` narrows the whole-backlog `bd blocked` projection to
-  the requested ids **before** `nativeBlockersFor` resolves blocker statuses.
-  `list` passes the whole backlog, so the narrowing is a no-op there.
-- `depsFor` passes every id to one `bd dep list` (bd batches natively, capped by
-  `DEP_BATCH_SIZE` to stay off the argv limit) instead of one call per id.
-  A request that **resolves exactly one id** answers with the blocker beads
-  themselves — no edge-owner field — which is why `depOwner` falls back to the
-  requested id; more resolving ids return proper `issue_id`/`depends_on_id` edge
-  records. bd picks the shape by resolved ids, not passed ids, and skipped ids
-  only warn on stderr, so the guard detects exactly one case: a multi-id batch
-  answering in the owner-less shape means every id but one was skipped and the
-  survivor would silently lose its edges, so that read fails loudly. It does
-  **not** detect the other case: when two or more ids still resolve, bd returns
-  the normal edge shape, every surviving id keeps its correct deps, and only the
-  ids that vanished mid-read render with no deps. That fail-open is deliberate —
-  another agent deleting one task on a shared backlog should not fail an entire
-  read, and the next read self-heals.
-- `showCommand` only reads the whole backlog when the task has no
-  `native_blockers`. A backend that reports native blocker state answers
-  `blocked` on its own; only the derived-graph fallback (Markdown) needs `all`.
+- **`bd` payloads carry the dependency graph inline.** `bd list`/`bd ready`
+attach edge records (`issue_id`/`depends_on_id`/`type`) to every bead, and
+`bd show` attaches the dependency beads themselves (`id`/`dependency_type`,
+with status). `inlineDeps` decodes both shapes, so `list` is one `bd list --all`
+plus one `bd blocked` — no `bd dep list` fan-out, no `bd show` per blocker.
+`bd dep list` survives only for `remove`'s `--direction up` dependents check
+(a single-id up-list answers with the dependent beads themselves, status
+included, so no per-dependent `get` either).
+- **Statuses resolve from data already in hand.** Blocker statuses come from
+the same `bd list --all` status set (list/blocked) or the show payload's
+inline dependency records (single-task reads); only ids missing from both
+reach `statusesFor`, which batches `bd show <ids...>` (native multi-id, missing
+ids warn on stderr and are skipped) capped by `SHOW_BATCH_SIZE` off the argv
+limit.
+- **Reads are cached per process, keyed by exact bd argv** (`readCache` in
+`call`), and any mutating verb drops the whole cache — including failed
+mutations — so a read can never outlive a write it did not observe. Each CLI
+invocation is a fresh process, so the cache never spans commands; external
+(mutations from other fleet actors) mid-process are inherently racy reads,
+which `capabilities().realtimeSync: false` already declares.
+- **`bd blocked` owns native blocker refs.** A task with no blocked-by edges
+reports empty native blockers without calling `bd blocked` at all; a task with
+them gets refs from the (cached) whole-backlog `bd blocked`, which decides
+which dependents count as blocked — never derive refs from the dep graph
+yourself or `get` and `list` will disagree.
+- **Fail-open on mid-read vanishing.** Another agent deleting a task between
+the backlog read and the blocked projection must not fail the read: the
+survivor keeps its edges, the vanished task does not render, the next read
+self-heals.
+- `showCommand` never reads the whole backlog: a backend that reports native
+  blocker state (beads) answers from the single `bd show` (its payload carries
+  the dependency beads and their statuses); only the derived-graph fallback
+  (Markdown) needs `list`.
+- **The CLI view layer must not fan out either.** `withDependencyTargets`
+  (`src/commands/state.ts`) resolves dep-target states through ONE
+  `store.list({})` read, never a `get` per target - on beads each `get` is a
+  `bd show` subprocess, and `ready`/`blocked` ask for one target per rendered
+  task. Markdown wins too (one file parse instead of one per target).
 
-One N+1 is a **known exception** to the rule, not a licence to add more:
-`statusesFor` still spends one `bd show` per distinct blocker, because real
-`bd blocked --json` omits blocker status and `nativeBlockersFor` must resolve it.
-On `list` the requested set is the whole backlog, so this — not `bd dep list`'s
-~0.05s/id in-process cost alone — is part of the residual `list` time. `bd show`
-batches ids natively; the fix is tracked as
-`tasks-axi-statusesfor-batching-followup`. Until it lands, `eachBounded` caps the
-fan-out at `HYDRATION_CONCURRENCY`, asserted by the bounding test.
-
-`test/backends/beads.test.ts`'s `fakeBd` models both `dep list` shapes and, via
-the `"blocked status"` ignore flag, real `bd blocked --json` output that omits
-blocker status — the omission is what forces a `bd show` per blocker.
+`scripts/bench-beads.ts` benchmarks this against a deterministic synthetic
+894-issue store (build, golden dump, per-scenario wall time + bd call count
+through a logging shim); `test/fixtures/synthetic-beads.ts` is the shared
+builder. `test/backends/beads.test.ts`'s `fakeBd` models the inline dependency
+payloads, multi-id `bd show` (with stderr warnings for unresolvable ids), and,
+via ignore flags, payload variants (`"blocked status"`, `"dep status"`) that
+force the status-resolution fallbacks.
 
 ## Markdown grammar invariants (the hard part — do not regress)
 
@@ -145,7 +161,6 @@ Any argv shape other than exactly one version flag falls through to `runAxiCli`,
 - Migrate firstmate's own `backlog.md` onto tasks-axi (a separate firstmate-repo change).
 - sqlite backend (P2); github/jira/linear backends (P3) — slot in behind the existing `Store` seam.
 - Optional: count free-form Done lines toward the prune keep, or recognize compound ids (`a / b`).
-- `tasks-axi-statusesfor-batching-followup`: batch `statusesFor` through one `bd show <ids>`.
 
 ## Maintaining this file
 

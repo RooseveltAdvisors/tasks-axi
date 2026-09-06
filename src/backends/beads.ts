@@ -45,11 +45,22 @@ import type {
 const META_PREFIX = "<!-- tasks-axi:beads/v1:";
 const META_SUFFIX = " -->";
 const HELD_LABEL = "tasks-axi-held";
-const HYDRATION_CONCURRENCY = 8;
-/** Ids per `bd dep list` call; keeps a huge backlog off the argv length limit. */
-const DEP_BATCH_SIZE = 200;
+/** Ids per `bd show` batch; keeps a huge blocker set off the argv length limit. */
+const SHOW_BATCH_SIZE = 100;
 /** Priority assigned when `add` passes none: the neutral middle, never P0/P1. */
 const BEADS_DEFAULT_PRIORITY = 2;
+
+/**
+ * bd verbs this adapter issues as reads. Anything else — including verbs it
+ * never issues and any future bd command — is treated as a mutation and
+ * drops the per-process read cache, so a stale read can never outlive a write.
+ */
+const READ_COMMANDS = new Set(["list", "show", "blocked", "ready"]);
+
+function isReadCommand(args: string[]): boolean {
+  if (args[0] === "dep") return args[1] === "list";
+  return READ_COMMANDS.has(args[0] ?? "");
+}
 
 /**
  * Spawns bd and streams both pipes into memory with no size cap. execFile's
@@ -228,19 +239,49 @@ function nativeBlockerRefs(bead: Bead): NativeBlockerRef[] | undefined {
   });
 }
 
-async function eachBounded<T>(
-  values: T[],
-  worker: (value: T) => Promise<void>,
-): Promise<void> {
-  for (
-    let offset = 0;
-    offset < values.length;
-    offset += HYDRATION_CONCURRENCY
-  ) {
-    await Promise.all(
-      values.slice(offset, offset + HYDRATION_CONCURRENCY).map(worker),
-    );
+/**
+ * Dependency edges bd attaches inline on bead records. `bd list`, `bd ready`,
+ * and `bd show` all carry each issue's dependencies in the payload itself:
+ * list/ready attach edge records (`issue_id`/`depends_on_id`/`type`), show
+ * attaches the dependency beads (`id`/`dependency_type`, with status). Both
+ * shapes collapse through depTarget/depType, and the owner is always the
+ * record they hang from - so no separate `bd dep list` fan-out is needed for
+ * any of them.
+ */
+function inlineDeps(bead: Bead): Dep[] {
+  if (!Array.isArray(bead.dependencies)) return [];
+  const deps: Dep[] = [];
+  for (const raw of bead.dependencies) {
+    const item = record(raw);
+    const target = depTarget(item) ?? text(item.id);
+    const type = depType(item.type ?? item.dependency_type);
+    if (target && type) deps.push({ type, id: target });
   }
+  return deps;
+}
+
+/** Statuses of a bead's inline dependency records, keyed by dependency id. */
+function inlineDepStatuses(bead: Bead): Map<string, string> {
+  const statuses = new Map<string, string>();
+  if (!Array.isArray(bead.dependencies)) return statuses;
+  for (const raw of bead.dependencies) {
+    const item = record(raw);
+    const id = text(item.id);
+    const status = text(item.status);
+    if (id && status) statuses.set(id, status);
+  }
+  return statuses;
+}
+
+/** Native blocker refs keyed by id, from a `bd blocked --json` payload. */
+function blockedRefsFrom(items: Bead[]): Map<string, NativeBlockerRef[]> {
+  const refs = new Map<string, NativeBlockerRef[]>();
+  for (const bead of items) {
+    const id = text(bead.id);
+    const blockers = nativeBlockerRefs(bead);
+    if (id && blockers !== undefined) refs.set(id, blockers);
+  }
+  return refs;
 }
 
 function depKey(dep: Dep): string {
@@ -332,6 +373,12 @@ export class BeadsStore implements Store {
   private readonly cwd: string;
   private readonly prefix: string;
   private readonly run: BeadsRunner;
+  /**
+   * Read results cached per store instance (one CLI process), keyed by the
+   * exact bd argv. Every mutating verb drops the whole cache, so a read can
+   * never outlive a write it did not observe.
+   */
+  private readonly readCache = new Map<string, unknown>();
 
   constructor(options: BeadsStoreOptions) {
     this.binary = options.binary ?? "bd";
@@ -361,13 +408,19 @@ export class BeadsStore implements Store {
     args: string[],
     notFoundOk = false,
   ): Promise<unknown> {
+    const cacheKey = JSON.stringify(args);
+    if (this.readCache.has(cacheKey)) return this.readCache.get(cacheKey);
+    if (!isReadCommand(args)) this.readCache.clear();
     try {
       const result = await this.run(this.binary, args, this.cwd);
+      let parsed: unknown;
       try {
-        return JSON.parse(result.stdout || "null");
+        parsed = JSON.parse(result.stdout || "null");
       } catch {
         throw new AxiError(`beads ${verb} returned invalid JSON`, "UNKNOWN");
       }
+      if (isReadCommand(args)) this.readCache.set(cacheKey, parsed);
+      return parsed;
     } catch (error) {
       if (error instanceof AxiError) throw error;
       if (
@@ -378,6 +431,7 @@ export class BeadsStore implements Store {
           `${String((error as { stderr?: string }).stderr ?? "")} ${String((error as { stdout?: string }).stdout ?? "")}`,
         )
       ) {
+        if (isReadCommand(args)) this.readCache.set(cacheKey, null);
         return null;
       }
       const failure =
@@ -400,69 +454,47 @@ export class BeadsStore implements Store {
     }
   }
 
-  private async depsFor(ids: string[]): Promise<Map<string, Dep[]>> {
-    const uniqueIds = [...new Set(ids)];
-    const result = new Map<string, Dep[]>(uniqueIds.map((id) => [id, []]));
-    // `bd dep list` takes many ids at once. Asking one id at a time costs a
-    // subprocess per task, which dominates the cost of every backlog-wide read.
-    for (let offset = 0; offset < uniqueIds.length; offset += DEP_BATCH_SIZE) {
-      const batch = uniqueIds.slice(offset, offset + DEP_BATCH_SIZE);
-      const items = jsonItems(
-        await this.call("dep list", ["dep", "list", ...batch, "--json"]),
-      );
-      for (const item of items) {
-        // A request that resolves exactly one id answers with the blocker beads
-        // themselves; those records carry no edge owner (their `owner` field is
-        // the assignee), so the requested id is the owner by construction. bd
-        // picks that shape by how many ids RESOLVE, not how many were passed,
-        // so the same shape from a multi-id batch means ids were skipped and
-        // the edges cannot be attributed — refuse rather than drop them.
-        const edgeOwner = depOwner(item);
-        if (edgeOwner === undefined && batch.length > 1) {
-          throw new AxiError(
-            `beads dep list answered ${batch.length} ids without edge owners`,
-            "UNKNOWN",
-            [
-              `Some requested tasks no longer exist; re-run to read the current backlog`,
-            ],
-          );
-        }
-        const owner = edgeOwner ?? batch[0];
-        const target = depTarget(item) ?? text(item.id);
-        const type = depType(item.type ?? item.dependency_type);
-        if (!owner || !target || !type) continue;
-        result.get(owner)?.push({ type, id: target });
+  /**
+   * Resolves the status of each requested id. `bd show` batches ids natively
+   * (unresolvable ids warn on stderr and are skipped), so one subprocess per
+   * SHOW_BATCH_SIZE ids replaces the one-subprocess-per-blocker fan-out that
+   * made a fleet-scale read cost minutes. Ids whose status is already in
+   * hand - from the backlog read or a show's inline dependencies - never
+   * reach bd at all.
+   */
+  private async statusesFor(
+    ids: string[],
+    known?: ReadonlyMap<string, string>,
+  ): Promise<Map<string, string>> {
+    const statuses = new Map(known ?? []);
+    const missing = [...new Set(ids)].filter(
+      (id) => id !== "" && !statuses.has(id),
+    );
+    for (
+      let offset = 0;
+      offset < missing.length;
+      offset += SHOW_BATCH_SIZE
+    ) {
+      const batch = missing.slice(offset, offset + SHOW_BATCH_SIZE);
+      const raw = await this.call("show", ["show", ...batch, "--json"], true);
+      for (const bead of jsonItems(raw)) {
+        const id = text(bead.id);
+        const status = text(bead.status);
+        if (id && status) statuses.set(id, status);
       }
     }
-    return result;
-  }
-
-  private async statusesFor(ids: string[]): Promise<Map<string, string>> {
-    const statuses = new Map<string, string>();
-    await eachBounded([...new Set(ids)], async (id) => {
-      const raw = await this.call("show", ["show", id, "--json"], true);
-      const bead = jsonItems(raw)[0];
-      const status = bead ? text(bead.status) : undefined;
-      if (status) statuses.set(id, status);
-    });
     return statuses;
   }
 
-  private async nativeBlockersFor(
-    beads: Bead[],
-    mode: "ready" | "blocked",
+  /**
+   * Hydrates native blocker refs into NativeBlocker records, resolving every
+   * blocker status once from `known` (already-fetched beads) plus batched
+   * `bd show` fallback for anything still missing.
+   */
+  private async hydrateNativeBlockers(
+    refs: Map<string, NativeBlockerRef[]>,
+    known?: ReadonlyMap<string, string>,
   ): Promise<Map<string, NativeBlocker[]>> {
-    const refs = new Map<string, NativeBlockerRef[]>();
-    for (const bead of beads) {
-      const id = text(bead.id);
-      if (!id) continue;
-      if (mode === "ready") {
-        refs.set(id, []);
-        continue;
-      }
-      const blockers = nativeBlockerRefs(bead);
-      if (blockers !== undefined) refs.set(id, blockers);
-    }
     const blockerIds = [
       ...new Set(
         [...refs.values()]
@@ -471,7 +503,7 @@ export class BeadsStore implements Store {
           .filter((id) => id !== ""),
       ),
     ];
-    const statuses = await this.statusesFor(blockerIds);
+    const statuses = await this.statusesFor(blockerIds, known);
     return new Map(
       [...refs.entries()].map(([id, blockers]) => [
         id,
@@ -483,48 +515,66 @@ export class BeadsStore implements Store {
     );
   }
 
-  private async nativeBlockersForBeads(
-    beads: Bead[],
-  ): Promise<Map<string, NativeBlocker[]>> {
-    const ids = new Set(
-      beads
-        .map((bead) => text(bead.id))
-        .filter((id): id is string => id !== undefined),
+  /**
+   * The whole backlog from one `bd list --all`: bead records, every
+   * dependency edge (bd attaches them inline), and every status. This is the
+   * single whole-backlog read that list/blocked/priorities/reconcile share,
+   * cached per process, instead of a `bd dep list` batch plus a `bd show` per
+   * blocker.
+   */
+  private async allBeads(): Promise<{
+    beads: Bead[];
+    deps: Map<string, Dep[]>;
+    statuses: Map<string, string>;
+  }> {
+    const beads = jsonItems(
+      await this.call("list", [
+        "list",
+        "--all",
+        "--no-pager",
+        "-n",
+        "0",
+        "--json",
+      ]),
     );
-    // `bd blocked` reports the whole backlog. Narrow it to the requested ids
-    // BEFORE nativeBlockersFor resolves blocker statuses, otherwise a single
-    // `get` pays one `bd show` per blocker of every blocked task in the file.
-    const blocked = await this.nativeBlockersFor(
-      jsonItems(await this.call("blocked", ["blocked", "--json"])).filter(
-        (bead) => ids.has(text(bead.id) ?? ""),
-      ),
-      "blocked",
-    );
-    return new Map([...ids].map((id) => [id, blocked.get(id) ?? []] as const));
+    const deps = new Map<string, Dep[]>();
+    const statuses = new Map<string, string>();
+    for (const bead of beads) {
+      const id = text(bead.id);
+      if (!id) continue;
+      deps.set(id, inlineDeps(bead));
+      const status = text(bead.status);
+      if (status) statuses.set(id, status);
+    }
+    return { beads, deps, statuses };
   }
 
-  private async tasks(
-    value: unknown,
-    native?: "ready" | "blocked" | Map<string, NativeBlocker[]>,
-  ): Promise<Task[]> {
-    const beads = jsonItems(value);
-    const deps = await this.depsFor(
-      beads
-        .map((bead) => text(bead.id))
-        .filter((id): id is string => id !== undefined),
+  /**
+   * Native blockers for one bead from a `bd show` payload. A task with no
+   * blocked-by edges has no blockers to report without touching bd again;
+   * otherwise `bd blocked` owns the refs (it decides which dependents count
+   * as blocked) and the blocker statuses come from the same show payload's
+   * inline dependency records, falling back to batched `bd show` only for a
+   * ref bd reports that the show payload lacks.
+   */
+  private async nativeBlockersForBead(
+    bead: Bead,
+    deps: Dep[],
+  ): Promise<NativeBlocker[]> {
+    if (!deps.some((dep) => dep.type === "blocked-by")) return [];
+    const id = text(bead.id) ?? "";
+    const refs = blockedRefsFrom(
+      jsonItems(await this.call("blocked", ["blocked", "--json"])),
+    ).get(id);
+    if (refs === undefined) return [];
+    const statuses = await this.statusesFor(
+      refs.map((ref) => ref.id),
+      inlineDepStatuses(bead),
     );
-    const nativeBlockers =
-      typeof native === "string"
-        ? await this.nativeBlockersFor(beads, native)
-        : native;
-    return beads.map((bead) => {
-      const id = text(bead.id) ?? "";
-      return taskFromBead(
-        bead,
-        deps.get(id) ?? [],
-        nativeBlockers ? (nativeBlockers.get(id) ?? []) : undefined,
-      );
-    });
+    return refs.map((ref) => ({
+      id: ref.id,
+      status: ref.status ?? statuses.get(ref.id) ?? "unknown",
+    }));
   }
 
   private async bead(
@@ -536,13 +586,16 @@ export class BeadsStore implements Store {
     const items = jsonItems(raw);
     const bead = items[0];
     if (!bead || !text(bead.id)) return null;
-    const deps = await this.depsFor([id]);
+    // `bd show` carries the task's dependencies inline (the dependency beads
+    // themselves, with status), so a single-task read costs one bd subprocess
+    // plus, when blockers matter, the shared whole-backlog `bd blocked`.
+    const deps = inlineDeps(bead);
     const nativeBlockers = includeNativeBlockers
-      ? await this.nativeBlockersForBeads([bead])
+      ? await this.nativeBlockersForBead(bead, deps)
       : undefined;
     return {
       bead,
-      task: taskFromBead(bead, deps.get(id) ?? [], nativeBlockers?.get(id)),
+      task: taskFromBead(bead, deps, nativeBlockers),
     };
   }
 
@@ -578,34 +631,26 @@ export class BeadsStore implements Store {
   }
 
   async list(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
-    const beads = jsonItems(
-      await this.call("list", [
-        "list",
-        "--all",
-        "--no-pager",
-        "-n",
-        "0",
-        "--json",
-      ]),
+    const { beads, deps, statuses } = await this.allBeads();
+    const nativeBlockers = await this.hydrateNativeBlockers(
+      blockedRefsFrom(
+        jsonItems(await this.call("blocked", ["blocked", "--json"])),
+      ),
+      statuses,
     );
-    const items = await this.tasks(
-      beads,
-      await this.nativeBlockersForBeads(beads),
-    );
+    const items = beads.map((bead) => {
+      const id = text(bead.id) ?? "";
+      return taskFromBead(
+        bead,
+        deps.get(id) ?? [],
+        nativeBlockers.get(id) ?? [],
+      );
+    });
     return queryTasks(items, query);
   }
 
   private async reconcileExpiredDeferrals(): Promise<void> {
-    const beads = jsonItems(
-      await this.call("list", [
-        "list",
-        "--all",
-        "--no-pager",
-        "-n",
-        "0",
-        "--json",
-      ]),
-    );
+    const { beads } = await this.allBeads();
     for (const bead of beads) {
       const id = text(bead.id);
       const task = taskFromBead(bead, []);
@@ -624,38 +669,40 @@ export class BeadsStore implements Store {
 
   async ready(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
     await this.reconcileExpiredDeferrals();
-    const items = (
-      await this.tasks(
-        await this.call("ready", ["ready", "-n", "0", "--json"]),
-        "ready",
-      )
-    ).filter((task) => !isHoldActive(task));
+    // `bd ready` attaches each bead's dependency edges inline and readiness
+    // is native, so blockers hydrate as empty refs with no status lookups.
+    const items = jsonItems(
+      await this.call("ready", ["ready", "-n", "0", "--json"]),
+    )
+      .map((bead) => taskFromBead(bead, inlineDeps(bead), []))
+      .filter((task) => !isHoldActive(task));
     return queryTasks(items, query);
   }
 
   async blocked(query: TaskQuery): Promise<{ items: Task[]; total: number }> {
-    const items = await this.tasks(
-      await this.call("blocked", ["blocked", "--json"]),
-      "blocked",
+    const beads = jsonItems(await this.call("blocked", ["blocked", "--json"]));
+    const { deps, statuses } = await this.allBeads();
+    const nativeBlockers = await this.hydrateNativeBlockers(
+      blockedRefsFrom(beads),
+      statuses,
     );
+    const items = beads.map((bead) => {
+      const id = text(bead.id) ?? "";
+      return taskFromBead(
+        bead,
+        deps.get(id) ?? [],
+        nativeBlockers.get(id) ?? [],
+      );
+    });
     return queryTasks(items, query);
   }
 
   async priorities(): Promise<PriorityHistogram> {
-    // One cheap `bd list` is enough for both histograms; skip the deps/blocker
+    // One cheap `bd list` is enough for both histograms; skip the blocker
     // hydration `list()` pays for, so the number the captain watches stays
     // one fast command even on a large workspace. `--all` carries the closed
     // beads, which is what makes the all-time tally free here.
-    const beads = jsonItems(
-      await this.call("list", [
-        "list",
-        "--all",
-        "--no-pager",
-        "-n",
-        "0",
-        "--json",
-      ]),
-    );
+    const { beads } = await this.allBeads();
     return countPriorities(
       beads.map((bead) => ({
         priority: bead.priority,
@@ -982,8 +1029,17 @@ export class BeadsStore implements Store {
     );
     for (const item of dependents) {
       if (text(item.dependency_type ?? item.type) !== "blocks") continue;
-      const dependent = await this.get(depOwner(item) ?? text(item.id) ?? "");
-      if (dependent && dependent.state !== "done") {
+      const dependentId = depOwner(item) ?? text(item.id);
+      if (!dependentId) continue;
+      // A single-id `--direction up` answers with the dependent beads
+      // themselves, so their status is already in hand; fall back to a get
+      // only for an edge-shaped record without one.
+      const status = text(item.status);
+      const state =
+        status !== undefined
+          ? stateOf(status)
+          : (await this.get(dependentId))?.state;
+      if (state !== undefined && state !== "done") {
         throw new AxiError(
           `Task "${id}" is still blocking active tasks`,
           "VALIDATION_ERROR",

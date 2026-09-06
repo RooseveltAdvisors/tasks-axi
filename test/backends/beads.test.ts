@@ -13,6 +13,24 @@ function fakeBd(ignore: string[] = []) {
     depends_on_id: string;
     type: string;
   }> = [];
+  // Real bd attaches each issue's dependencies inline: `show` answers with
+  // the dependency beads themselves (id/dependency_type/status), `list` and
+  // `ready` with edge records (issue_id/depends_on_id/type).
+  const showDepsFor = (id: string) =>
+    edges
+      .filter((edge) => edge.issue_id === id)
+      .map((edge) => ({
+        id: edge.depends_on_id,
+        title: `fake ${edge.depends_on_id}`,
+        // "dep status" models a payload without the inline status, which is
+        // what forces the adapter's batched `bd show` status fallback.
+        ...(ignore.includes("dep status")
+          ? {}
+          : { status: beads.get(edge.depends_on_id)?.status }),
+        dependency_type: edge.type,
+      }));
+  const edgeDepsFor = (id: string) =>
+    edges.filter((edge) => edge.issue_id === id);
   const run: BeadsRunner = async (_binary, args) => {
     const command = args[0];
     const operation = command === "dep" ? `${command} ${args[1]}` : command;
@@ -41,8 +59,26 @@ function fakeBd(ignore: string[] = []) {
           : {}),
       });
     } else if (command === "show") {
-      const bead = beads.get(args[1]);
-      return { stdout: JSON.stringify(bead ? [bead] : []), stderr: "" };
+      // `bd show` batches ids natively: unresolvable ids warn on stderr and
+      // are skipped, the rest answer as one JSON array.
+      const ids = args.slice(1).filter((arg) => !arg.startsWith("-"));
+      const found = ids
+        .map((id) => beads.get(id))
+        .filter((bead): bead is FakeBead => Boolean(bead));
+      return {
+        stdout: JSON.stringify(
+          found.map((bead) => ({
+            ...bead,
+            dependencies: showDepsFor(String(bead.id)),
+          })),
+        ),
+        stderr: ids
+          .filter((id) => !beads.has(id))
+          .map(
+            (id) => `Error fetching ${id}: no issue found matching "${id}"`,
+          )
+          .join("\n"),
+      };
     } else if (command === "ready" || command === "blocked") {
       const activeBlocker = (id: string) =>
         edges.some(
@@ -80,10 +116,21 @@ function fakeBd(ignore: string[] = []) {
               ...bead,
               blocked_by: blockersFor(String(bead.id)),
             }))
-          : items;
+          : items.map((bead) => ({
+              ...bead,
+              dependencies: edgeDepsFor(String(bead.id)),
+            }));
       return { stdout: JSON.stringify(output), stderr: "" };
     } else if (command === "list") {
-      return { stdout: JSON.stringify([...beads.values()]), stderr: "" };
+      return {
+        stdout: JSON.stringify(
+          [...beads.values()].map((bead) => ({
+            ...bead,
+            dependencies: edgeDepsFor(String(bead.id)),
+          })),
+        ),
+        stderr: "",
+      };
     } else if (command === "dep") {
       if (args[1] === "list") {
         const ids = args.slice(2).filter((arg) => !arg.startsWith("-"));
@@ -146,38 +193,6 @@ function fakeBd(ignore: string[] = []) {
   return { run, edges, beads };
 }
 
-function realDepShapeBd() {
-  const fake = fakeBd();
-  const run: BeadsRunner = async (binary, args, cwd) => {
-    if (args[0] === "dep" && args[1] === "list") {
-      const ids = args.slice(2).filter((arg) => !arg.startsWith("-"));
-      // Real bd picks the payload shape by how many ids RESOLVE, not how many
-      // were passed: exactly one resolving id answers with the blocker beads
-      // themselves (target-only, no owner), skipping unresolvable ids with a
-      // stderr warning; more than one returns proper edge records.
-      const resolved = ids.filter((id) => fake.beads.has(id));
-      if (resolved.length === 1) {
-        return {
-          stdout: JSON.stringify(
-            fake.edges
-              .filter((edge) => edge.issue_id === resolved[0])
-              .map((edge) => ({
-                id: edge.depends_on_id,
-                dependency_type: edge.type,
-              })),
-          ),
-          stderr: ids
-            .filter((id) => !fake.beads.has(id))
-            .map((id) => `warning: resolving ${id}: not found (skipped)`)
-            .join("\n"),
-        };
-      }
-    }
-    return fake.run(binary, args, cwd);
-  };
-  return { ...fake, run };
-}
-
 describe("BeadsStore", () => {
   it("answers show without hydrating the whole backlog", async () => {
     const fake = fakeBd();
@@ -196,20 +211,27 @@ describe("BeadsStore", () => {
     await store.addDep("fm-shown", { type: "blocked-by", id: "fm-blocker" });
 
     commands.length = 0;
+    // A fresh store models the next CLI process: an empty read cache, so
+    // every command below is a real subprocess.
+    const reader = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        commands.push(args.filter((arg) => !arg.startsWith("-")).join(" "));
+        return fake.run(binary, args, cwd);
+      },
+    });
     const out = await showCommand(["fm-shown"], {
-      store,
+      store: reader,
       config: resolveConfig({}),
     });
 
     expect(out).toContain("blocked: yes");
     expect(out).toContain("blocked_by: fm-blocker");
-    // Native blocker state answers `blocked`, so no whole-backlog read.
-    expect(commands).toEqual([
-      "show fm-shown",
-      "dep list fm-shown",
-      "blocked",
-      "show fm-blocker",
-    ]);
+    // `bd show` carries the task's dependencies (with blocker statuses)
+    // inline, and the refs come from the shared whole-backlog `bd blocked`,
+    // so a single-task read is exactly two subprocesses and no more.
+    expect(commands).toEqual(["show fm-shown", "blocked"]);
   });
 
   it("rejects a beads add whose --body carries the reserved priority-why line", async () => {
@@ -232,14 +254,15 @@ describe("BeadsStore", () => {
     expect(fake.beads.has("bd-spoof-q1")).toBe(false);
   });
 
-  it("resolves blocker statuses only for the requested beads", async () => {
+  it("resolves blocker statuses without a per-blocker fan-out", async () => {
     const fake = fakeBd(["blocked status"]);
-    const shown: string[] = [];
+    const shown: string[][] = [];
     const store = new BeadsStore({
       path: "/tmp/project/.beads",
       prefix: "fm",
       run: async (binary, args, cwd) => {
-        if (args[0] === "show") shown.push(args[1]);
+        if (args[0] === "show")
+          shown.push(args.slice(1).filter((arg) => !arg.startsWith("-")));
         return fake.run(binary, args, cwd);
       },
     });
@@ -258,17 +281,15 @@ describe("BeadsStore", () => {
     shown.length = 0;
     const task = await store.get("fm-wanted");
 
-    // Status still resolved for the requested task's own blocker...
+    // The blocker's status rides along on the same `bd show` payload that
+    // carried the dependency, so nothing else is fetched for the task.
     expect(task?.native_blockers).toEqual([
       { id: "fm-wanted-blocker", status: "open" },
     ]);
-    // ...but never for an unrelated blocked task's blocker.
-    expect([...new Set(shown)].sort()).toEqual([
-      "fm-wanted",
-      "fm-wanted-blocker",
-    ]);
+    expect(shown).toEqual([["fm-wanted"]]);
 
-    // `list` asks for the whole backlog, so the narrowing is a no-op there.
+    // `list` resolves every blocker status from the one backlog read: no
+    // `bd show` at all, for the requested task's blockers or anyone else's.
     shown.length = 0;
     const listed = await store.list({});
     expect(
@@ -279,10 +300,7 @@ describe("BeadsStore", () => {
       ["fm-other", [{ id: "fm-other-blocker", status: "open" }]],
       ["fm-other-blocker", []],
     ]);
-    expect([...new Set(shown)].sort()).toEqual([
-      "fm-other-blocker",
-      "fm-wanted-blocker",
-    ]);
+    expect(shown).toEqual([]);
   });
 
   it("keeps an explicitly cleared managed body empty", async () => {
@@ -506,19 +524,27 @@ describe("BeadsStore", () => {
     });
     fake.beads.get("fm-pinned")!.status = "pinned";
 
-    expect((await store.ready({})).items.map((task) => task.id)).toContain(
+    // The pin landed after this store's reads were cached, so the assertions
+    // run through a fresh store - the next process - exactly as a concurrent
+    // fleet actor would observe it.
+    const reader = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: fake.run,
+    });
+    expect((await reader.ready({})).items.map((task) => task.id)).toContain(
       "fm-dependent",
     );
-    expect((await store.blocked({})).items).toEqual([]);
-    const listed = await store.list({});
+    expect((await reader.blocked({})).items).toEqual([]);
+    const listed = await reader.list({});
     expect(
       listed.items.find((task) => task.id === "fm-dependent"),
     ).toMatchObject({ native_blockers: [] });
     expect(blockedIds(listed.items).has("fm-dependent")).toBe(false);
-    await expect(store.get("fm-dependent")).resolves.toMatchObject({
+    await expect(reader.get("fm-dependent")).resolves.toMatchObject({
       native_blockers: [],
     });
-    await expect(store.deps("fm-dependent")).resolves.toMatchObject({
+    await expect(reader.deps("fm-dependent")).resolves.toMatchObject({
       task: { native_blockers: [] },
     });
   });
@@ -548,10 +574,12 @@ describe("BeadsStore", () => {
     });
   });
 
-  it("batches dependency hydration into one dep list call", async () => {
+  it("hydrates dependencies from the backlog read itself", async () => {
     const fake = fakeBd();
     const depListCalls: string[][] = [];
+    const commands: string[] = [];
     const run: BeadsRunner = async (binary, args, cwd) => {
+      commands.push(args.filter((arg) => !arg.startsWith("-")).join(" "));
       if (args[0] === "dep" && args[1] === "list")
         depListCalls.push(args.slice(2).filter((arg) => !arg.startsWith("-")));
       return fake.run(binary, args, cwd);
@@ -572,58 +600,78 @@ describe("BeadsStore", () => {
       id: "bd-hydrate-1",
     });
 
+    commands.length = 0;
     depListCalls.length = 0;
-    const listed = await store.list({});
+    // A fresh store models the next CLI process reading the backlog cold.
+    const reader = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run,
+    });
+    const listed = await reader.list({});
     expect(listed.total).toBe(20);
-    // One subprocess for the whole backlog, not one per task.
-    expect(depListCalls).toEqual([ids]);
-    // Batch records still land on their own owner.
+    // `bd list` carries every dependency edge inline, so the whole backlog
+    // hydrates from two subprocesses total - one list, one blocked - with no
+    // `bd dep list` fan-out at all.
+    expect(commands).toEqual(["list 0", "blocked"]);
+    expect(depListCalls).toEqual([]);
+    // Edges still land on their own owner.
     expect(listed.items.map((item) => item.deps)).toEqual([
       [{ type: "blocked-by", id: "bd-hydrate-1" }],
       ...Array.from({ length: 19 }, () => []),
     ]);
   });
 
-  it("bounds blocker status hydration concurrency", async () => {
-    const fake = fakeBd(["blocked status"]);
-    let active = 0;
-    let maximum = 0;
+  it("batches missing blocker statuses into one show call", async () => {
+    // "dep status" strips the inline status from `bd show`'s dependency
+    // records, so the adapter must fall back to `bd show` - in one batched
+    // call carrying every blocker id, not one subprocess per blocker.
+    const fake = fakeBd(["dep status"]);
+    const showCalls: string[][] = [];
     const run: BeadsRunner = async (binary, args, cwd) => {
-      if (args[0] !== "show") return fake.run(binary, args, cwd);
-      active += 1;
-      maximum = Math.max(maximum, active);
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      try {
-        return await fake.run(binary, args, cwd);
-      } finally {
-        active -= 1;
-      }
+      if (args[0] === "show")
+        showCalls.push(args.slice(1).filter((arg) => !arg.startsWith("-")));
+      return fake.run(binary, args, cwd);
     };
     const store = new BeadsStore({
       path: "/tmp/project/.beads",
       prefix: "bd",
       run,
     });
-    for (let index = 0; index < 20; index += 1) {
-      await store.create({
-        id: `bd-status-${index}`,
-        title: `status ${index}`,
-      });
-      await store.create({
-        id: `bd-status-blocker-${index}`,
-        title: `blocker ${index}`,
-      });
-      await store.addDep(`bd-status-${index}`, {
+    await store.create({ id: "bd-dependent", title: "dependent" });
+    for (const id of ["one", "two", "three", "four", "five"])
+      await store.create({ id: `bd-blocker-${id}`, title: `blocker ${id}` });
+    for (const id of ["one", "two", "three", "four", "five"])
+      await store.addDep("bd-dependent", {
         type: "blocked-by",
-        id: `bd-status-blocker-${index}`,
+        id: `bd-blocker-${id}`,
       });
-    }
 
-    active = 0;
-    maximum = 0;
-    await expect(store.list({})).resolves.toMatchObject({ total: 40 });
-    expect(maximum).toBeGreaterThan(1);
-    expect(maximum).toBeLessThanOrEqual(8);
+    showCalls.length = 0;
+    // A fresh store models the next CLI process, with an empty read cache.
+    const reader = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "bd",
+      run,
+    });
+    const task = await reader.get("bd-dependent");
+    // One batched show for all five blockers, after the show of the task.
+    expect(showCalls).toEqual([
+      ["bd-dependent"],
+      [
+        "bd-blocker-one",
+        "bd-blocker-two",
+        "bd-blocker-three",
+        "bd-blocker-four",
+        "bd-blocker-five",
+      ],
+    ]);
+    expect(task?.native_blockers).toEqual(
+      ["one", "two", "three", "four", "five"].map((id) => ({
+        id: `bd-blocker-${id}`,
+        status: "open",
+      })),
+    );
   });
 
   it("allows exactly one actor to claim a Beads task", async () => {
@@ -861,42 +909,101 @@ describe("BeadsStore", () => {
     expect(fake.beads.size).toBe(0);
   });
 
-  it("decodes the target-only shape returned by real bd dep list", async () => {
-    const fake = realDepShapeBd();
-    const store = new BeadsStore({
-      path: "/tmp/project/.beads",
-      prefix: "fm",
-      run: fake.run,
-    });
-    await store.create({ id: "fm-owner", title: "owner" });
-    await store.create({ id: "fm-target", title: "target" });
-
-    await expect(
-      store.addDep("fm-owner", { type: "blocked-by", id: "fm-target" }),
-    ).resolves.toBe(true);
-    expect((await store.get("fm-owner"))?.deps).toEqual([
-      { type: "blocked-by", id: "fm-target" },
-    ]);
-  });
-
-  it("refuses a multi-id dep list batch that answers without edge owners", async () => {
-    const fake = realDepShapeBd();
+  it("fails open when a task vanishes mid-read", async () => {
+    const fake = fakeBd();
     const store = new BeadsStore({
       path: "/tmp/project/.beads",
       prefix: "fm",
       run: async (binary, args, cwd) => {
-        const result = await fake.run(binary, args, cwd);
-        // Another process deletes the bead between the backlog listing and its
-        // dependency hydration, so bd resolves only one of the two ids.
+        // Another process deletes the bead between the backlog listing and
+        // the blocked projection, so the two reads disagree about the store.
         if (args[0] === "list") fake.beads.delete("fm-gone");
-        return result;
+        return fake.run(binary, args, cwd);
       },
     });
     await store.create({ id: "fm-kept", title: "kept" });
     await store.create({ id: "fm-gone", title: "gone" });
     await store.addDep("fm-kept", { type: "blocked-by", id: "fm-gone" });
 
-    await expect(store.list({})).rejects.toThrow(/without edge owners/);
+    // Deleting one task on a shared backlog must not fail the whole read:
+    // the survivor keeps its data, the vanished task simply does not render,
+    // and the next read self-heals.
+    const listed = await store.list({});
+    expect(listed.items.map((item) => item.id)).toEqual(["fm-kept"]);
+    expect(listed.items[0].deps).toEqual([
+      { type: "blocked-by", id: "fm-gone" },
+    ]);
+  });
+
+  it("reuses reads within one process", async () => {
+    const fake = fakeBd();
+    const commands: string[] = [];
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        commands.push(args.filter((arg) => !arg.startsWith("-")).join(" "));
+        return fake.run(binary, args, cwd);
+      },
+    });
+    await store.create({ id: "fm-a", title: "a" });
+    await store.create({ id: "fm-b", title: "b" });
+    await store.addDep("fm-a", { type: "blocked-by", id: "fm-b" });
+
+    // Prime every read, then repeat each one: the second pass must not
+    // spawn a single bd subprocess.
+    await store.list({});
+    await store.get("fm-a");
+    await store.blocked({});
+    commands.length = 0;
+    await store.list({});
+    await store.get("fm-a");
+    await store.blocked({});
+    await store.deps("fm-a");
+    expect(commands).toEqual([]);
+  });
+
+  it("drops the read cache on mutation", async () => {
+    const fake = fakeBd();
+    const store = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: fake.run,
+    });
+    await store.create({ id: "fm-first", title: "first" });
+    expect((await store.list({})).total).toBe(1);
+
+    // A mutation between two reads invalidates the cache, so the second
+    // list observes the new task instead of the stale backlog.
+    await store.create({ id: "fm-second", title: "second" });
+    const listed = await store.list({});
+    expect(listed.total).toBe(2);
+    expect(listed.items.map((item) => item.id)).toEqual([
+      "fm-first",
+      "fm-second",
+    ]);
+
+    // A failed mutation must drop the cache too: model a write that landed
+    // in bd despite the reported failure, and prove the next read re-fetches
+    // instead of serving the pre-write snapshot.
+    const throwing = new BeadsStore({
+      path: "/tmp/project/.beads",
+      prefix: "fm",
+      run: async (binary, args, cwd) => {
+        if (args[0] === "update") {
+          const bead = fake.beads.get(args[1]);
+          if (bead && args.includes("--title"))
+            bead.title = String(args[args.indexOf("--title") + 1]);
+          throw Object.assign(new Error("bd update failed"), { code: 1 });
+        }
+        return fake.run(binary, args, cwd);
+      },
+    });
+    await throwing.get("fm-first");
+    await expect(
+      throwing.update("fm-first", { title: "renamed" }),
+    ).rejects.toThrow("beads update failed");
+    expect((await throwing.get("fm-first"))?.title).toBe("renamed");
   });
 
   it("verifies transitions and clears dated holds", async () => {
@@ -915,7 +1022,14 @@ describe("BeadsStore", () => {
     await store.create({ id: "bd-native-defer", title: "native defer" });
     const nativeDeferred = fake.beads.get("bd-native-defer");
     if (nativeDeferred) nativeDeferred.defer_until = "2026-10-01";
-    await store.update("bd-native-defer", { hold: null });
+    // The defer landed behind the store's back, so the clearing update runs
+    // through a fresh store - the next process - exactly as fleet concurrency
+    // would deliver it.
+    const deferStore = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    await deferStore.update("bd-native-defer", { hold: null });
     expect(nativeDeferred?.defer_until).toBe("");
 
     await store.create({
@@ -925,7 +1039,13 @@ describe("BeadsStore", () => {
     });
     const labelDrift = fake.beads.get("bd-label-drift");
     if (labelDrift) labelDrift.labels = [];
-    await store.update("bd-label-drift", { hold: { reason: "later" } });
+    // The label drifted behind the store's back; the repairing update runs
+    // through a fresh store - the next process - as fleet concurrency would.
+    const driftStore = new BeadsStore({
+      path: "/tmp/project/.beads",
+      run: fake.run,
+    });
+    await driftStore.update("bd-label-drift", { hold: { reason: "later" } });
     expect(labelDrift?.labels).toEqual(["tasks-axi-held"]);
 
     const partial = fakeBd(["update native"]);

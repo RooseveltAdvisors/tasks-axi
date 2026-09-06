@@ -611,26 +611,19 @@ async function withDependencyTargets(
   store: Store,
   tasks: Task[],
 ): Promise<Task[]> {
-  const dependencyTargetConcurrency = 8;
+  // One whole-store read beats a get() per dependency target: view commands
+  // ask for one target per rendered task, and each get() is a `bd show`
+  // subprocess on the Beads backend (or a whole-file parse on Markdown).
+  // Backends with a per-process read cache make the overlapping backlog
+  // read free when the command already fetched it.
   const byId = new Map(tasks.map((task) => [task.id, task]));
-  const targetIds = [
-    ...new Set(
-      tasks.flatMap((task) => task.deps.map((dependency) => dependency.id)),
-    ),
-  ].filter((id) => !byId.has(id));
-  for (
-    let offset = 0;
-    offset < targetIds.length;
-    offset += dependencyTargetConcurrency
-  ) {
-    const targets = await Promise.all(
-      targetIds
-        .slice(offset, offset + dependencyTargetConcurrency)
-        .map((id) => store.get(id)),
-    );
-    for (const target of targets) {
-      if (target) byId.set(target.id, target);
-    }
+  const targetIds = new Set(
+    tasks.flatMap((task) => task.deps.map((dependency) => dependency.id)),
+  );
+  if (targetIds.size === 0) return [...byId.values()];
+  const { items } = await store.list({});
+  for (const target of items) {
+    if (targetIds.has(target.id)) byId.set(target.id, target);
   }
   return [...byId.values()];
 }
