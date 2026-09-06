@@ -1,0 +1,1580 @@
+{
+ "list": [
+  {
+   "body": "Synthetic body for issue 1.\n\nSecond paragraph kept deterministic.",
+   "deps": [],
+   "id": "syn-b0001",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 1"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0002",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 2"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0003",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 3"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0004",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 4"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0005",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 5"
+  },
+  {
+   "body": "Synthetic body for issue 6.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0006",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 6"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0007",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 7"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0007",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0008",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "in_flight",
+   "title": "synthetic issue 8"
+  },
+  {
+   "body": "Synthetic body for issue 9.",
+   "deps": [
+    {
+     "id": "syn-b0008",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0009",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "done",
+   "title": "synthetic issue 9"
+  },
+  {
+   "body": "Synthetic body for issue 10.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0009",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0010",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 10"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0011",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 11"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0012",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 12"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0012",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0011",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0013",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0012",
+     "status": "in_progress"
+    },
+    {
+     "id": "syn-b0011",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 13"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0014",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 14"
+  },
+  {
+   "body": "Synthetic body for issue 15.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0015",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 15"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0016",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0002",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 16"
+  },
+  {
+   "body": "Synthetic body for issue 17.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0014",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0017",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "done",
+   "title": "synthetic issue 17"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0018",
+   "links": [],
+   "native_blockers": [],
+   "priority": 4,
+   "state": "done",
+   "title": "synthetic issue 18"
+  },
+  {
+   "body": "Synthetic body for issue 19.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0019",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 4,
+   "state": "queued",
+   "title": "synthetic issue 19"
+  },
+  {
+   "body": "Synthetic body for issue 20.",
+   "deps": [
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0020",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    }
+   ],
+   "priority": 1,
+   "state": "in_flight",
+   "title": "synthetic issue 20"
+  },
+  {
+   "body": "Synthetic body for issue 21.\n\nSecond paragraph kept deterministic.",
+   "deps": [],
+   "id": "syn-b0021",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 21"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0021",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0022",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0021",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 22"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0014",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0023",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0002",
+     "status": "open"
+    }
+   ],
+   "priority": 1,
+   "state": "queued",
+   "title": "synthetic issue 23"
+  },
+  {
+   "body": "Synthetic body for issue 24.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0023",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0024",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0023",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 24"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0006",
+     "type": "parent"
+    },
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0025",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0002",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 25"
+  },
+  {
+   "body": "Synthetic body for issue 26.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0025",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0026",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0025",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 26"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0026",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0025",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0027",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0026",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0025",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 27"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0028",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 28"
+  },
+  {
+   "body": "Synthetic body for issue 29.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0022",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0029",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0022",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 29"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0024",
+     "type": "discovered-from"
+    }
+   ],
+   "id": "syn-b0030",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 30"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0021",
+     "type": "parent"
+    },
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0031",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 31"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0011",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0031",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0032",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0011",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0031",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 32"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0033",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 33"
+  },
+  {
+   "body": "Synthetic body for issue 34.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0011",
+     "type": "discovered-from"
+    },
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0033",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0034",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 34"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0034",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0035",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0034",
+     "status": "in_progress"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 35"
+  },
+  {
+   "body": "Synthetic body for issue 36.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0035",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0036",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0035",
+     "status": "in_progress"
+    }
+   ],
+   "priority": 3,
+   "state": "in_flight",
+   "title": "synthetic issue 36"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0036",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0025",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0037",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0036",
+     "status": "in_progress"
+    },
+    {
+     "id": "syn-b0025",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 37"
+  },
+  {
+   "body": "Synthetic body for issue 38.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0037",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0038",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0037",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 38"
+  },
+  {
+   "body": "Synthetic body for issue 39.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0039",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 39"
+  },
+  {
+   "body": "Synthetic body for issue 40.",
+   "deps": [
+    {
+     "id": "syn-b0030",
+     "type": "parent"
+    }
+   ],
+   "id": "syn-b0040",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 40"
+  }
+ ],
+ "listTotal": 40,
+ "ready": [
+  {
+   "body": "Synthetic body for issue 1.\n\nSecond paragraph kept deterministic.",
+   "deps": [],
+   "id": "syn-b0001",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 1"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0002",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 2"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0003",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 3"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0004",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 4"
+  },
+  {
+   "deps": [],
+   "id": "syn-b0011",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 11"
+  },
+  {
+   "body": "Synthetic body for issue 21.\n\nSecond paragraph kept deterministic.",
+   "deps": [],
+   "id": "syn-b0021",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 21"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0024",
+     "type": "discovered-from"
+    }
+   ],
+   "id": "syn-b0030",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 30"
+  },
+  {
+   "body": "Synthetic body for issue 40.",
+   "deps": [
+    {
+     "id": "syn-b0030",
+     "type": "parent"
+    }
+   ],
+   "id": "syn-b0040",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 40"
+  }
+ ],
+ "readyTotal": 8,
+ "blocked": [
+  {
+   "deps": [
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0005",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 5"
+  },
+  {
+   "body": "Synthetic body for issue 10.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0009",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0010",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 10"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0012",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 12"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0012",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0011",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0013",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0012",
+     "status": "in_progress"
+    },
+    {
+     "id": "syn-b0011",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 13"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0016",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0002",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 16"
+  },
+  {
+   "body": "Synthetic body for issue 19.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0019",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 4,
+   "state": "queued",
+   "title": "synthetic issue 19"
+  },
+  {
+   "body": "Synthetic body for issue 20.",
+   "deps": [
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0020",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    }
+   ],
+   "priority": 1,
+   "state": "in_flight",
+   "title": "synthetic issue 20"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0021",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0022",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0021",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 22"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0014",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0023",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0002",
+     "status": "open"
+    }
+   ],
+   "priority": 1,
+   "state": "queued",
+   "title": "synthetic issue 23"
+  },
+  {
+   "body": "Synthetic body for issue 24.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0023",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0024",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0023",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 24"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0006",
+     "type": "parent"
+    },
+    {
+     "id": "syn-b0002",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0025",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0002",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 25"
+  },
+  {
+   "body": "Synthetic body for issue 26.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0025",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0026",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0025",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 26"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0026",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0025",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0027",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0026",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0025",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 27"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0028",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 28"
+  },
+  {
+   "body": "Synthetic body for issue 29.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0022",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0029",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0022",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0001",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 29"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0021",
+     "type": "parent"
+    },
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0031",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 31"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0011",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0031",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0032",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0011",
+     "status": "open"
+    },
+    {
+     "id": "syn-b0031",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 32"
+  },
+  {
+   "body": "Synthetic body for issue 34.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0011",
+     "type": "discovered-from"
+    },
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0033",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0034",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0004",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 34"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0034",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0035",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0034",
+     "status": "in_progress"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 35"
+  },
+  {
+   "body": "Synthetic body for issue 36.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0035",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0036",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0035",
+     "status": "in_progress"
+    }
+   ],
+   "priority": 3,
+   "state": "in_flight",
+   "title": "synthetic issue 36"
+  },
+  {
+   "deps": [
+    {
+     "id": "syn-b0036",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0025",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0037",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0036",
+     "status": "in_progress"
+    },
+    {
+     "id": "syn-b0025",
+     "status": "open"
+    }
+   ],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 37"
+  },
+  {
+   "body": "Synthetic body for issue 38.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0037",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0038",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0037",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 38"
+  },
+  {
+   "body": "Synthetic body for issue 39.\n\nSecond paragraph kept deterministic.",
+   "deps": [
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0039",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 39"
+  }
+ ],
+ "blockedTotal": 23,
+ "gets": {
+  "syn-b0001": {
+   "body": "Synthetic body for issue 1.\n\nSecond paragraph kept deterministic.",
+   "deps": [],
+   "id": "syn-b0001",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 1"
+  },
+  "syn-b0002": {
+   "deps": [],
+   "id": "syn-b0002",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 2"
+  },
+  "syn-b0003": {
+   "deps": [],
+   "id": "syn-b0003",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "queued",
+   "title": "synthetic issue 3"
+  },
+  "syn-b0006": {
+   "body": "Synthetic body for issue 6.",
+   "deps": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0006",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 6"
+  },
+  "syn-b0007": {
+   "deps": [],
+   "id": "syn-b0007",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "done",
+   "title": "synthetic issue 7"
+  },
+  "syn-b0009": {
+   "body": "Synthetic body for issue 9.",
+   "deps": [
+    {
+     "id": "syn-b0008",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0009",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "done",
+   "title": "synthetic issue 9"
+  },
+  "syn-b0008": {
+   "deps": [
+    {
+     "id": "syn-b0007",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0008",
+   "links": [],
+   "native_blockers": [],
+   "priority": 3,
+   "state": "in_flight",
+   "title": "synthetic issue 8"
+  },
+  "syn-b0012": {
+   "deps": [
+    {
+     "id": "syn-b0003",
+     "type": "blocked-by"
+    }
+   ],
+   "id": "syn-b0012",
+   "links": [],
+   "native_blockers": [
+    {
+     "id": "syn-b0003",
+     "status": "open"
+    }
+   ],
+   "priority": 2,
+   "state": "in_flight",
+   "title": "synthetic issue 12"
+  },
+  "syn-b0011": {
+   "deps": [],
+   "id": "syn-b0011",
+   "links": [],
+   "native_blockers": [],
+   "priority": 2,
+   "state": "queued",
+   "title": "synthetic issue 11"
+  },
+  "syn-missing": null
+ },
+ "deps": {
+  "syn-b0001": {
+   "task": {
+    "body": "Synthetic body for issue 1.\n\nSecond paragraph kept deterministic.",
+    "deps": [],
+    "id": "syn-b0001",
+    "links": [],
+    "native_blockers": [],
+    "priority": 2,
+    "state": "queued",
+    "title": "synthetic issue 1"
+   },
+   "items": []
+  },
+  "syn-b0002": {
+   "task": {
+    "deps": [],
+    "id": "syn-b0002",
+    "links": [],
+    "native_blockers": [],
+    "priority": 2,
+    "state": "queued",
+    "title": "synthetic issue 2"
+   },
+   "items": []
+  },
+  "syn-b0003": {
+   "task": {
+    "deps": [],
+    "id": "syn-b0003",
+    "links": [],
+    "native_blockers": [],
+    "priority": 3,
+    "state": "queued",
+    "title": "synthetic issue 3"
+   },
+   "items": []
+  },
+  "syn-b0006": {
+   "task": {
+    "body": "Synthetic body for issue 6.",
+    "deps": [
+     {
+      "id": "syn-b0004",
+      "type": "blocked-by"
+     }
+    ],
+    "id": "syn-b0006",
+    "links": [],
+    "native_blockers": [],
+    "priority": 2,
+    "state": "done",
+    "title": "synthetic issue 6"
+   },
+   "items": [
+    {
+     "id": "syn-b0004",
+     "type": "blocked-by"
+    }
+   ]
+  },
+  "syn-b0007": {
+   "task": {
+    "deps": [],
+    "id": "syn-b0007",
+    "links": [],
+    "native_blockers": [],
+    "priority": 2,
+    "state": "done",
+    "title": "synthetic issue 7"
+   },
+   "items": []
+  },
+  "syn-b0009": {
+   "task": {
+    "body": "Synthetic body for issue 9.",
+    "deps": [
+     {
+      "id": "syn-b0008",
+      "type": "blocked-by"
+     },
+     {
+      "id": "syn-b0001",
+      "type": "blocked-by"
+     }
+    ],
+    "id": "syn-b0009",
+    "links": [],
+    "native_blockers": [],
+    "priority": 3,
+    "state": "done",
+    "title": "synthetic issue 9"
+   },
+   "items": [
+    {
+     "id": "syn-b0008",
+     "type": "blocked-by"
+    },
+    {
+     "id": "syn-b0001",
+     "type": "blocked-by"
+    }
+   ]
+  }
+ }
+}

@@ -669,7 +669,7 @@ describe("state commands", () => {
       }
     });
 
-    it("bounds dependency target hydration fanout", async () => {
+    it("resolves dependency targets through one list read instead of a get fanout", async () => {
       const b = makeBacklog();
       try {
         const blockedItems: Task[] = Array.from({ length: 20 }, (_, index) => ({
@@ -680,36 +680,40 @@ describe("state commands", () => {
           deps: [{ type: "blocked-by", id: `target-${index}` }],
         }));
         const targets = new Map<string, Task>(
-          blockedItems.map((task) => [
+          blockedItems.map((task, index) => [
             task.deps[0].id,
             {
               id: task.deps[0].id,
               title: `${task.deps[0].id} target`,
-              state: "queued",
+              state: index === 0 ? "done" : "queued",
               links: [],
               deps: [],
             },
           ]),
         );
-        let active = 0;
-        let maximum = 0;
+        let listCalls = 0;
+        let getCalls = 0;
         const store = Object.assign(b.store, {
           blocked: async () => ({
             items: blockedItems,
             total: blockedItems.length,
           }),
-          get: async (id: string) => {
-            active += 1;
-            maximum = Math.max(maximum, active);
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            active -= 1;
-            return targets.get(id) ?? null;
+          list: async () => {
+            listCalls += 1;
+            return { items: [...targets.values()], total: targets.size };
+          },
+          get: async () => {
+            getCalls += 1;
+            return null;
           },
         });
 
-        await blockedCommand([], { ...b.ctx, store });
-        expect(maximum).toBeGreaterThan(1);
-        expect(maximum).toBeLessThanOrEqual(8);
+        const out = await blockedCommand([], { ...b.ctx, store });
+        expect(listCalls).toBe(1);
+        expect(getCalls).toBe(0);
+        // target-0 is done, so activeBlockers drops it from blocked_by.
+        expect(out).toContain("blocked-0,queued,task,\"-\",blocked 0,none");
+        expect(out).toContain("blocked-1,queued,task,\"-\",blocked 1,target-1");
       } finally {
         b.cleanup();
       }
