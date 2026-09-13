@@ -99,6 +99,43 @@ function spawnBd(
   });
 }
 
+/**
+ * Relative due dates per priority, mirroring the ladder `bd q` applies when
+ * `due.required` is on (P0 +1d .. P4 +30d, verified against bd 1.2.2). The
+ * offsets are handed to bd verbatim so bd still owns the date arithmetic and
+ * the fleet keeps ONE ladder instead of two that can drift. `bd create` -
+ * unlike `bd q` - deliberately does not synthesize a due date, so a store
+ * with the invariant on rejects every create that omits `--due`; supplying
+ * it here (the caller that knows the priority) fixes that without weakening
+ * the invariant for anyone calling `bd create` directly.
+ */
+const BEADS_DUE_LADDER = ["+1d", "+3d", "+7d", "+14d", "+30d"] as const;
+
+/** Ladder lookup; an off-ladder priority fails loudly rather than guessing. */
+function dueForPriority(priority: number): string {
+  const due = BEADS_DUE_LADDER[priority];
+  if (due === undefined)
+    throw new AxiError(
+      `cannot derive a due date for priority ${priority} (expected 0-4)`,
+      "VALIDATION_ERROR",
+    );
+  return due;
+}
+
+/** Lifts bd's JSON `error` field out of a failed run's stdout, if present. */
+function beadsErrorText(stdout: unknown): string | undefined {
+  if (typeof stdout !== "string" || stdout.trim() === "") return undefined;
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    const message = record(parsed).error;
+    return typeof message === "string" && message.trim() !== ""
+      ? message.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The priority-cap rule: P0/P1 only move with a one-line reason. */
 function priorityWhyRequired(priority: number): AxiError {
   return new AxiError(
@@ -436,16 +473,21 @@ export class BeadsStore implements Store {
       }
       const failure =
         error && typeof error === "object"
-          ? (error as { stderr?: unknown; code?: unknown })
+          ? (error as { stderr?: unknown; stdout?: unknown; code?: unknown })
           : {};
       const stderr = String(failure.stderr ?? "").trim();
+      // bd reports validation failures as {"error": ...} on STDOUT, not
+      // stderr, so stderr alone collapsed a real message ("due date is
+      // required ...") into a bare "exit 1" that had to be re-probed by
+      // hand. Prefer bd's own words wherever it printed them.
+      const reported = beadsErrorText(failure.stdout) ?? stderr;
       const status =
         typeof failure.code === "number"
           ? `exit ${failure.code}`
           : typeof failure.code === "string" && failure.code !== ""
             ? failure.code
             : "";
-      const detail = [status, stderr].filter(Boolean).join(": ");
+      const detail = [status, reported].filter(Boolean).join(": ");
       throw new AxiError(
         `beads ${verb} failed${detail ? `: ${detail}` : ""}`,
         "UNKNOWN",
@@ -775,6 +817,7 @@ export class BeadsStore implements Store {
       );
     }
     args.push("--priority", String(priority));
+    args.push("--due", dueForPriority(priority));
     if (input.hold) {
       args.push("--labels", HELD_LABEL);
       if (input.hold.until) args.push("--defer", input.hold.until);
