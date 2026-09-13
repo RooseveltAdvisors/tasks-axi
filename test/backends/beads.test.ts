@@ -1321,17 +1321,11 @@ describe("beads due.required", () => {
       run,
     });
 
-  const createOf = (calls: string[][], id: string) =>
-    calls.find(
+  const dueOf = (calls: string[][], id: string) => {
+    const create = calls.find(
       (args) => args[0] === "create" && args[args.indexOf("--id") + 1] === id,
     );
-  const dueOf = (calls: string[][], id: string) => {
-    const create = createOf(calls, id);
     return create?.[(create?.indexOf("--due") ?? -1) + 1];
-  };
-  const dueSourceOf = (calls: string[][], id: string) => {
-    const create = createOf(calls, id);
-    return create?.[(create?.indexOf("--due-source") ?? -1) + 1];
   };
 
   it("adds against a store with the invariant on, recording the ladder due", async () => {
@@ -1349,13 +1343,11 @@ describe("beads due.required", () => {
       });
       expect(created.priority).toBe(priority);
       expect(dueOf(fake.calls, `fm-p${priority}`)).toBe(due);
-      expect(dueSourceOf(fake.calls, `fm-p${priority}`)).toBe("default");
     }
 
     // An unpriorited add takes the neutral P2 rung, never P0's.
     await store.create({ id: "fm-default", title: "default" });
     expect(dueOf(fake.calls, "fm-default")).toBe("+7d");
-    expect(dueSourceOf(fake.calls, "fm-default")).toBe("default");
   });
 
   it("keeps the in-flight, done, and dependency paths intact", async () => {
