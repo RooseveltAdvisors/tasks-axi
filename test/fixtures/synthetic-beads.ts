@@ -226,6 +226,10 @@ export function buildSyntheticStore(
       "--priority",
       String(issue.priority),
     ];
+    // A fixed due date, not the priority ladder: the store must stay
+    // byte-deterministic, and a house store with `due.required` on refuses
+    // every create that omits `--due`.
+    args.push("--due", "2031-06-01");
     if (issue.body !== undefined) args.push("--description", issue.body);
     if (issue.held) args.push("--labels", "tasks-axi-held");
     if (issue.status === "deferred") args.push("--defer", "2031-06-01");

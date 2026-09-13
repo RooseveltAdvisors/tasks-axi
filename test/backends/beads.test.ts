@@ -1280,3 +1280,110 @@ describe("BeadsStore", () => {
     expect(calls).toEqual(["list"]);
   });
 });
+
+/**
+ * The house Beads fork requires a due date on every create (`due.required`).
+ * `bd create` - unlike `bd q` - does not synthesize one, so an adapter that
+ * omits `--due` cannot add a task at all on such a store, and bd reports the
+ * refusal as JSON on STDOUT with an empty stderr, which the adapter used to
+ * collapse to a bare `beads create failed: exit 1`.
+ */
+describe("beads due.required", () => {
+  /** bd's real refusal: exit 1, JSON on stdout, nothing on stderr. */
+  const dueRequired = (title: string) =>
+    Object.assign(new Error("bd exited with code 1"), {
+      code: 1,
+      stdout: JSON.stringify({
+        error: `validation failed: due date is required for task "${title}" (pass --due, or set \`due.required: false\` in config.yaml)`,
+        schema_version: 1,
+      }),
+      stderr: "",
+    });
+
+  /** Wraps a fake bd in the invariant: a create without `--due` is refused. */
+  function requiringDue() {
+    const fake = fakeBd();
+    const calls: string[][] = [];
+    const run: BeadsRunner = async (binary, args, cwd) => {
+      calls.push(args);
+      if (args[0] === "create" && !args.includes("--due"))
+        throw dueRequired(String(args[1]));
+      return fake.run(binary, args, cwd);
+    };
+    return { run, calls };
+  }
+
+  const storeOn = (run: BeadsRunner) =>
+    new BeadsStore({
+      path: "/tmp/project/.beads",
+      binary: "/fake/bd",
+      prefix: "fm",
+      run,
+    });
+
+  const dueOf = (calls: string[][], id: string) => {
+    const create = calls.find(
+      (args) => args[0] === "create" && args[args.indexOf("--id") + 1] === id,
+    );
+    return create?.[(create?.indexOf("--due") ?? -1) + 1];
+  };
+
+  it("adds against a store with the invariant on, recording the ladder due", async () => {
+    const fake = requiringDue();
+    const store = storeOn(fake.run);
+
+    // Every rung of the ladder bd itself applies in `bd q`: P0 +1d .. P4 +30d.
+    const ladder = ["+1d", "+3d", "+7d", "+14d", "+30d"];
+    for (const [priority, due] of ladder.entries()) {
+      const created = await store.create({
+        id: `fm-p${priority}`,
+        title: `priority ${priority}`,
+        priority,
+        ...(priority <= 1 ? { priorityWhy: "fleet critical" } : {}),
+      });
+      expect(created.priority).toBe(priority);
+      expect(dueOf(fake.calls, `fm-p${priority}`)).toBe(due);
+    }
+
+    // An unpriorited add takes the neutral P2 rung, never P0's.
+    await store.create({ id: "fm-default", title: "default" });
+    expect(dueOf(fake.calls, "fm-default")).toBe("+7d");
+  });
+
+  it("keeps the in-flight, done, and dependency paths intact", async () => {
+    const fake = requiringDue();
+    const store = storeOn(fake.run);
+
+    await store.create({ id: "fm-blocker", title: "blocker" });
+    const flying = await store.create({
+      id: "fm-flying",
+      title: "flying",
+      state: "in_flight",
+    });
+    expect(flying.state).toBe("in_flight");
+    const shipped = await store.create({
+      id: "fm-shipped",
+      title: "shipped",
+      state: "done",
+      deps: [{ type: "blocked-by", id: "fm-blocker" }],
+    });
+    expect(shipped.state).toBe("done");
+
+    // The supplied due date must not disturb what the item reads back as.
+    const readBack = await store.get("fm-shipped");
+    expect(readBack).toMatchObject({ id: "fm-shipped", state: "done" });
+    expect(readBack?.deps).toEqual([{ type: "blocked-by", id: "fm-blocker" }]);
+  });
+
+  it("surfaces bd's own validation message instead of a bare exit status", async () => {
+    // A create bd refuses for a reason the adapter cannot pre-empt.
+    const run: BeadsRunner = async (_binary, args) => {
+      if (args[0] === "create") throw dueRequired(String(args[1]));
+      return {} as never;
+    };
+
+    await expect(
+      storeOn(run).create({ id: "fm-refused", title: "refused" }),
+    ).rejects.toThrow(/due date is required for task "refused"/);
+  });
+});
