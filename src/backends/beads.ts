@@ -817,7 +817,7 @@ export class BeadsStore implements Store {
       );
     }
     args.push("--priority", String(priority));
-    args.push("--due", dueForPriority(priority));
+    args.push("--due", dueForPriority(priority), "--due-source", "default");
     if (input.hold) {
       args.push("--labels", HELD_LABEL);
       if (input.hold.until) args.push("--defer", input.hold.until);
