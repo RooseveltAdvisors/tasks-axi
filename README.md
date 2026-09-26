@@ -210,7 +210,9 @@ A posted receipt file records `state=posted`, request id, platform, attempt and 
 Its attempt count must exactly match the currently recorded delivery attempt, including late receipts that reconcile that same attempt from `unknown` or `partial`.
 An error file records the current attempt count, a safe delivery state, validated error code, occurrence time, optional retry time, and optional chunk counts.
 Its attempt count must exactly match the currently recorded delivery attempt, and stale or future-attempt errors fail without mutation.
-Expected-final types permit only their matching safe deliverables: `pr_url`, `report_path`, `commit_sha`, or `error_code`.
+Events that match the expected-final type permit only its matching safe deliverables: `pr_url`, `report_path`, `commit_sha`, or `error_code`; a failed event on another expected-final type may instead carry at most one safe `error_code`.
+A required relation whose bound work reports `failed` is terminal and deliverable for any expected-final type, not only `failure-outcome`: the accepted event's `public_safe_outcome` is the honest text to deliver.
+An obligation an older version parked in `pending-work` because its failed relation was not yet deliverable is read back as `ready`; any other stale `delivery.state` is still a hard validation error.
 Run `tasks-axi public-followup --help` for the exact file-backed command surface and state names.
 
 Each mutation is idempotent and returns the monotonic obligation `revision`, changed fields, and complete typed payload under `--json`.
