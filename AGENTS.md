@@ -1,23 +1,26 @@
-# tasks-axi — agent notes
+# tasks-axi - agent notes
+
+- When a repository's documentation and its existing code disagree, follow the conventions used in the existing code, and in your final reply point out each inconsistency you found between the documentation and the code.
+- Use `rg` (ripgrep) for file content search, never `grep -rn`. Use `fd` for filename/directory search, never `find`. `rg` and `fd` ignore `.git`, `.gitignore`, and binary files by default. Pass `--hidden` (or `-H`) when searching hidden directories like `.github/`, `.beads/`, or `.config/`. Use `rg --max-columns 200` to prevent wide minified files from blowing up the context window. Plain `grep` remains fine for simple pipe filters (`cmd | grep pattern`).
 
 Agent-ergonomic task/backlog CLI in the `*-axi` family, built on `axi-sdk-js` and mirroring `gh-axi`.
 It ships markdown and Beads (`bd`) backends behind a `Store` seam; sqlite and remote trackers are deferred.
 
 ## Architecture
 
-The CLI layer never knows which backend is active — it only talks to the `Store` interface.
+The CLI layer never knows which backend is active - it only talks to the `Store` interface.
 
-- `src/cli.ts` — `runAxiCli` wiring: `DESCRIPTION`, `TOP_HELP`, verb→handler map (aliases create/view/edit/delete/close), optional `task` noun prefix, global `--backend` / `--file` flags.
-- `src/context.ts` — `resolveTasksContext` builds backend `Store` + `ResolvedConfig` received by every command.
-- `src/store.ts` — `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`; optional hooks: `ready`/`blocked`/`deps`/`claim`/`priorities`, `prune`/`render`.
-- `src/model.ts` — `Task` data model.
-- `src/pr-url.ts` — `isPrUrl`, canonical PR-URL seam (GitHub `/pull/<n>` on github.com, Forgejo `/pulls/<n>` on lowercase DNS host); near-misses derive as `doc` links, never `pr`. Shared by link derivation, `--pr`, and public-followup `pr_url`.
-- `src/derive.ts` — fallback worker `blocked` / `ready` / active `held`, public delivery, and priority-histogram projections.
-- `src/priority-why.ts` — `priority-why: <text>` managed body line: parsed into `task.priority_why` (out of displayed body), re-emitted first on dirty render so `update --body` cannot silently strip it.
-- `src/backends/markdown*.ts` — byte-preserving Markdown backend (`markdown-grammar.ts` pure parse/render, `markdown.ts` lock/I/O).
-- `src/backends/beads.ts` — `bd` CLI adapter: maps ID, hold, and dep reasons; native ready/blocked/deps/claim hooks. Unbounded streaming runner `spawnBd` (see comment in file; guarded by `test/backends/beads-runner.test.ts`). Standalone temporary Git repo required before `bd init` (`test/backends/beads-live.test.ts`).
-- `src/public-followup.ts` — schema, privacy-safe validation, canonical encoding, immutable fields, lifecycle invariants for `kind=public-followup`; state machine in `src/commands/public-followup.ts`.
-- `src/commands/*` — verb handlers; `src/view.ts` (read TOON projection), `src/confirm.ts` (terse `ok:` line, `--json`, `renderMutation`).
+- `src/cli.ts` - `runAxiCli` wiring: `DESCRIPTION`, `TOP_HELP`, verb→handler map (aliases create/view/edit/delete/close), optional `task` noun prefix, global `--backend` / `--file` flags.
+- `src/context.ts` - `resolveTasksContext` builds backend `Store` + `ResolvedConfig` received by every command.
+- `src/store.ts` - `Store` interface and `Capabilities`. Core contract: `create/get/update/remove/list/transition/addDep/removeDep/updatePublicFollowup`; optional hooks: `ready`/`blocked`/`deps`/`claim`/`priorities`, `prune`/`render`.
+- `src/model.ts` - `Task` data model.
+- `src/pr-url.ts` - `isPrUrl`, canonical PR-URL seam (GitHub `/pull/<n>` on github.com, Forgejo `/pulls/<n>` on lowercase DNS host); near-misses derive as `doc` links, never `pr`. Shared by link derivation, `--pr`, and public-followup `pr_url`.
+- `src/derive.ts` - fallback worker `blocked` / `ready` / active `held`, public delivery, and priority-histogram projections.
+- `src/priority-why.ts` - `priority-why: <text>` managed body line: parsed into `task.priority_why` (out of displayed body), re-emitted first on dirty render so `update --body` cannot silently strip it.
+- `src/backends/markdown*.ts` - byte-preserving Markdown backend (`markdown-grammar.ts` pure parse/render, `markdown.ts` lock/I/O).
+- `src/backends/beads.ts` - `bd` CLI adapter: maps ID, hold, and dep reasons; native ready/blocked/deps/claim hooks. Unbounded streaming runner `spawnBd` (see comment in file; guarded by `test/backends/beads-runner.test.ts`). Standalone temporary Git repo required before `bd init` (`test/backends/beads-live.test.ts`).
+- `src/public-followup.ts` - schema, privacy-safe validation, canonical encoding, immutable fields, lifecycle invariants for `kind=public-followup`; state machine in `src/commands/public-followup.ts`.
+- `src/commands/*` - verb handlers; `src/view.ts` (read TOON projection), `src/confirm.ts` (terse `ok:` line, `--json`, `renderMutation`).
 - Shared helpers: `args.ts`, `body.ts`, `format.ts`, `fields.ts`, `toon.ts`, `suggestions.ts`, `skill.ts`.
 
 ## Beads reads must stay bounded, not proportional to backlog size
@@ -32,7 +35,7 @@ Every `bd` invocation spawns `git` and takes `.beads/embeddeddolt/.lock`. N+1 re
 - **Single-task read (`showCommand`):** exactly two subprocesses (`bd show` + cached `bd blocked` when blocked-by deps exist).
 - **CLI view layer avoids fan-out:** `withDependencyTargets` (`src/commands/state.ts`) resolves dep-target states through one `store.list({})` call, never per-target `get`.
 
-## Markdown grammar invariants (the hard part — do not regress)
+## Markdown grammar invariants (the hard part - do not regress)
 
 `src/backends/markdown-grammar.ts` is pure parse/render with no I/O; `markdown.ts` adds locking and atomic writes.
 
@@ -43,7 +46,7 @@ Every `bd` invocation spawns `git` and takes `.beads/embeddeddolt/.lock`. N+1 re
 - **Dependency edges with optional reason:** format `blocked-by: <id> - <reason>`. Reason is preserved in `Dep.reason`. Bare edges render after title before `( … )` tags; edges with reasons render last after all tags for idempotent re-parsing.
 - **Links and leading-word kinds:** live in prose, not managed tags. `done --pr`/`--report` append to title. `kind` is extracted from `(kind:)` or leading keywords (`SHIP`/`SCOUT`/`DOCS-ONLY`/`PERSISTENT SECONDMATE`).
 - **Body block:** 2-space indented or blank lines under a bullet. Managed `priority-why: <text>` is lifted into `task.priority_why` and re-emitted first on dirty render; deeper indentation (4+ spaces) is ordinary body. Inspect with `show <id> --full`, update via `update --body` or `--body-file` (`--archive-body` preserves superseded body in `note-archive.md`).
-- **Public-followup metadata:** reserved comment `  <!-- tasks-axi:public-followup/v1:<base64url-canonical-json> -->` immediately below bullet. Excluded from human body, strictly validated, preserved across operations. Generic worker readiness cannot dispatch/complete/reopen/remove/change kind; only receipt or Captain waiver completes it.
+- **Public-followup metadata:** reserved comment ` <!-- tasks-axi:public-followup/v1:<base64url-canonical-json> -->` immediately below bullet. Excluded from human body, strictly validated, preserved across operations. Generic worker readiness cannot dispatch/complete/reopen/remove/change kind; only receipt or Captain waiver completes it.
 - **Concurrency:** mutations use advisory lock `<path>.lock` via `withLock` (stale lock reported if timeout expires). Corruption-safe atomic temp-file + rename. Concurrent hand-edits are detected and refused. Reads do not lock.
 
 ## Conventions
